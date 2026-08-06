@@ -1,0 +1,88 @@
+# Ledger
+
+An objective tracker in the same luxe-dark register as Trove. Every objective is a card
+with two toggles — **Checked** and **Complete** — and an exception marker that raises
+itself whenever the objective's Exception field has anything in it.
+
+Static PWA: no build step, no framework, no server of its own. Runs on iPhone and on
+the desktop from the same URL, and syncs between them through a secret GitHub Gist.
+
+```
+ledger-app/
+├── index.html            app shell
+├── app.js                state, rendering, sync engine
+├── style.css             palette + components (inherited from Trove)
+├── sw.js                 service worker — offline app shell
+├── manifest.webmanifest  PWA metadata
+└── icons/                180 / 192 / 512 px
+```
+
+## How the data works
+
+`localStorage` is always the working copy — the app is fully usable with no network and
+no GitHub account at all. When linked, a secret Gist holds one `ledger.json` file that
+every device merges into.
+
+Merging is **per objective, newest write wins** — not whole-file last-write-wins. Editing
+a different objective on each device merges cleanly rather than one device clobbering
+the other. Deletes propagate as tombstones, which are purged after 30 days.
+
+Sync runs on launch, ~1.8s after any edit, whenever the app returns to the foreground,
+and once a minute while it is open.
+
+## Setup
+
+### 1. Host it
+
+The phone needs an https URL it can reach, so the folder can't just live on the desktop.
+GitHub Pages is the natural choice since the Gist already puts you on GitHub:
+
+1. Create a repository (public is fine — see the security note below) and upload the
+   contents of `ledger-app/`, with `index.html` at the repository root.
+2. Settings → Pages → Source: `main` / `/ (root)`.
+3. Wait a minute for `https://<username>.github.io/<repo>/`.
+
+Cloudflare Pages or Netlify work identically if you'd rather the repository be private.
+
+### 2. Install it
+
+- **iPhone:** open the URL in Safari → Share → *Add to Home Screen*. It launches
+  standalone, with no browser chrome.
+- **Desktop:** open the URL in Chrome or Edge and use *Install app* from the address bar,
+  or just leave it as a tab.
+
+### 3. Link the two
+
+1. Create a token at
+   [github.com/settings/tokens/new](https://github.com/settings/tokens/new?scopes=gist&description=Ledger)
+   with **only** the `gist` scope ticked. Copy it.
+2. In Ledger, tap the sync chip under the wordmark, paste the token, and press
+   **Create new Gist**.
+3. On the second device, paste the *same* token and the Gist ID from the first device,
+   then **Sync now**.
+
+The Gist ID is the long hex string at the end of the Gist URL. Pasting the whole URL
+works too — the app pulls the ID out.
+
+## Security notes
+
+- A `public: false` Gist is **secret, not private**: it is unlisted and won't appear in
+  search or on your profile, but anyone who has the URL can read it. If the objectives
+  are sensitive, use a private repo with a real backend instead.
+- The token is stored in `localStorage` on each device and is scoped to `gist` only, so
+  a leak exposes your Gists and nothing else in your GitHub account. **Unlink this
+  device** in settings clears it.
+- The app itself contains no secrets, so hosting it on a public GitHub Pages site is
+  safe — a stranger loading the URL gets an empty tracker.
+
+## Local development
+
+```bash
+py -m http.server 8777 --directory ledger-app
+```
+
+Then open `http://localhost:8777`. A `.claude/launch.json` entry named `ledger` does the
+same thing.
+
+Bump `CACHE` in `sw.js` when you change any shell file, otherwise the service worker
+keeps serving the old copy.
