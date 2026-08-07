@@ -24,11 +24,18 @@ narrowed desktop window gets the phone layout, and a tablet gets whichever actua
 The breakpoint is 900px.
 
 - **Under 900px** — one screen at a time. The list fills the screen; tapping a card pushes
-  the detail view over it, with a back button. Search and add live in the floating bottom bar.
-- **900px and up** — two panes. The list stays on the left (with search and add inline at
-  the top) while the detail sits on the right. Selecting a card swaps the right pane instead
-  of navigating, so you can edit one objective while scanning the rest. The selected card is
-  outlined in gold, and edits to a name or exception update the list live as you type.
+  the detail view over it. Folder chips, filter chips, search and add all sit in a fixed
+  cluster at the **bottom** of the screen: these are the controls used on every visit, so
+  they belong in right-thumb range rather than at the top where the hand cannot reach.
+- **900px and up** — two panes. The list stays on the left while the detail sits on the
+  right. Selecting a card swaps the right pane instead of navigating, so you can edit one
+  objective while scanning the rest. The selected card is outlined in gold, and edits to a
+  name or exception update the list live as you type.
+- **1100px and up** — a third column appears: a folder rail with live counts. Drag a card
+  from the list onto a rail row to move it into that folder.
+
+The desktop layout fills the window rather than sitting in a fixed-width column, so a wide
+monitor is actually used.
 
 Crossing the breakpoint re-renders. Both `matchMedia` and `resize` are wired to a single
 guard that only fires when the layout actually changes.
@@ -48,6 +55,29 @@ with ★ — that is what the Open filter hides and what the stats line counts.
 Renaming a toggle keeps its stored key, so existing objectives keep their state. Removing
 one leaves the stored flag untouched, so re-adding the toggle brings the state back.
 
+Press and hold a toggle row (or drag its ⠿ handle) to reorder; cards render toggles in
+that order. The colour swatch opens a palette with a native colour picker at the end, and
+colours are stored as hex, so any colour is expressible.
+
+### Toggle roles
+
+Each toggle can be given one role, and a folder holds at most one of each:
+
+| Role | Glyph | Effect |
+| --- | --- | --- |
+| Done | ★ | hidden by the **Open** filter, tallied in the stats line. Every folder needs one. |
+| Needs action | ! | feeds the **Actionable** filter — your to-do list |
+| Waiting | … | feeds the **Pending** filter — parked on someone else |
+
+The last two are optional. If a filter is selected in a folder that has not assigned that
+role, the empty state says so rather than just showing a blank list.
+
+### Right-click / press-and-hold
+
+Right-click a folder (desktop) or press and hold it (phone) for Edit, Show only this
+folder, New folder, and Delete — no hunting for a settings button. The **All** chip has no
+menu, since there is nothing to edit.
+
 Deleting a folder moves its objectives to the first remaining folder rather than destroying
 them; they keep their text but lose that folder's toggle states. The last folder cannot be
 deleted.
@@ -61,6 +91,26 @@ name, owner, notes, exception **and** tags.
 
 Tags are lower-cased and de-duplicated on entry, so the same tag typed two ways on two
 devices still matches.
+
+### Suggestions
+
+Under the tags field is a row of one-tap suggestions, refreshed as you type. There is no
+model involved — the signal is already in your own data, and a tag scores on:
+
+1. **Mentioned** — the tag appears in this objective's name, owner, notes or exception
+2. **Related** — it habitually co-occurs with tags already on this objective
+3. **Frequent** — how often you use it at all, which also breaks ties
+
+Gold chips were inferred (1 or 2); plain chips are just your common tags.
+
+## Pinned overlay (desktop)
+
+Pin an objective from its detail pane and it appears in a floating panel above everything
+else. Drag it by its header, resize it from the corner, collapse it to a title bar. The
+panel's position and size are remembered per screen (in `localStorage`, not synced — the
+pinned flag itself does sync). Geometry is clamped back into view on every commit and on
+window resize, so a panel dragged to an edge cannot be stranded off-screen by a smaller
+window later.
 
 ## Swipe actions
 
