@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -269,7 +269,7 @@ let view = { screen: 'home', id: null };
 let ui = {
   q: '', filter: cfg.filter, folder: cfg.folder,
   modal: null, editFolder: null, confirm: null, menu: null,
-  swipeId: null, suppressUntil: 0, tonePick: null,
+  swipeId: null, suppressUntil: 0, tonePick: null, hint: null,
   toastMsg: '', toastBad: false, toastTimer: null,
   needsRender: false, focusName: false,
   syncState: 'idle', syncMsg: ''
@@ -771,6 +771,33 @@ function pinPanelHTML() {
 }
 
 function menuHTML() {
+  if (!ui.menu) return '';
+  return ui.menu.kind === 'card' ? cardMenuHTML() : folderMenuHTML();
+}
+
+function cardMenuHTML() {
+  const p = byId(ui.menu.id);
+  if (!p) return '';
+  const at = ui.menu.x != null;
+  const others = liveFolders().filter(f => f.id !== p.folderId);
+  return '<div class="menu-scrim" data-act="close-menu"></div>' +
+    '<div class="menu-sheet items' + (at ? ' at-cursor' : '') + '" id="menu-sheet"' +
+      (at ? ' style="left:' + ui.menu.x + 'px;top:' + ui.menu.y + 'px"' : '') + '>' +
+      '<div class="m-title">' + esc(p.name.trim() || 'Untitled objective') + '</div>' +
+      '<button class="m-item gold" data-act="menu-open-card" data-id="' + p.id + '">Open</button>' +
+      // distinct act names so these never collide with the detail pane's buttons
+      '<button class="m-item" data-act="menu-pin" data-id="' + p.id + '">' + (p.pinned ? 'Unpin' : 'Pin to overlay') + '</button>' +
+      '<button class="m-item" data-act="menu-archive" data-id="' + p.id + '">' + (p.archived ? 'Restore' : 'Archive') + '</button>' +
+      (others.length
+        ? '<div class="m-sub">MOVE TO</div>' + others.map(f =>
+            '<button class="m-item dim" data-act="menu-move" data-id="' + p.id + '" data-f="' + f.id + '">' + esc(f.name || 'Untitled') + '</button>').join('')
+        : '') +
+      '<button class="m-item red" data-act="menu-delete" data-id="' + p.id + '">Delete</button>' +
+      '<button class="m-item dim" data-act="close-menu">Cancel</button>' +
+    '</div>';
+}
+
+function folderMenuHTML() {
   const f = ui.menu && folderById(ui.menu.id);
   if (!f) return '';
   const canDelete = liveFolders().length > 1;
@@ -787,6 +814,21 @@ function menuHTML() {
       (canDelete ? '<button class="m-item red" data-act="ask-del-folder" data-id="' + f.id + '">Delete folder</button>' : '') +
       '<button class="m-item dim" data-act="close-menu">Cancel</button>' +
     '</div>';
+}
+
+/* Explanations are collapsed behind an ⓘ so a screen you already understand
+   stays quiet. One open at a time; the choice is not persisted. */
+function lblHTML(text, forId, hintId, cls) {
+  const tag = forId ? '<label class="lbl' + (cls ? ' ' + cls : '') + '" for="' + forId + '">' + text + '</label>'
+                    : '<span class="lbl' + (cls ? ' ' + cls : '') + '">' + text + '</span>';
+  if (!hintId) return tag;
+  const open = ui.hint === hintId;
+  return '<div class="lbl-row">' + tag +
+    '<button class="info-btn' + (open ? ' on' : '') + '" data-act="hint" data-h="' + hintId + '"' +
+    ' aria-expanded="' + open + '" aria-label="Explain this">i</button></div>';
+}
+function hintHTML(hintId, html) {
+  return ui.hint === hintId ? '<div class="hint">' + html + '</div>' : '';
 }
 
 function doneFabHTML() {
@@ -856,10 +898,11 @@ function detailHTML(inPane) {
         fs.map(f => '<option value="' + f.id + '"' + (f.id === p.folderId ? ' selected' : '') + '>' + esc(f.name || 'Untitled') + '</option>').join('') +
       '</select></div>' +
 
-    '<div class="field"><label class="lbl" for="f-tags">TAGS</label>' +
+    '<div class="field">' + lblHTML('TAGS', 'f-tags', 'tags') +
       '<input class="inp" id="f-tags" value="' + esc(tagsToStr(p.tags)) + '" placeholder="concord, alectra, interconnection" autocomplete="off" autocapitalize="none" spellcheck="false">' +
       suggestHTML(p) +
-      '<div class="hint">Comma separated. Tags cut across folders — put the same tag on a solar project and its email thread, then tap it on any card to pull both up.</div></div>' +
+      hintHTML('tags', 'Comma separated. Tags cut across folders — put the same tag on a solar project and its email thread, then tap it on any card to pull both up. Suggestions below are gold when inferred from this objective’s own words, plain when they are simply tags you use often.') +
+    '</div>' +
 
     '<div class="field"><label class="lbl" for="f-owner">OWNER / REFERENCE</label>' +
       '<input class="inp" id="f-owner" data-f="owner" value="' + esc(p.owner) + '" placeholder="Optional" autocomplete="off"></div>' +
@@ -867,9 +910,10 @@ function detailHTML(inPane) {
     '<div class="field"><label class="lbl" for="f-notes">NOTES</label>' +
       '<textarea class="inp tall" id="f-notes" data-f="notes" placeholder="Detail, context, next steps…">' + esc(p.notes) + '</textarea></div>' +
 
-    '<div class="field"><label class="lbl exc" for="f-exc">EXCEPTION</label>' +
+    '<div class="field">' + lblHTML('EXCEPTION', 'f-exc', 'exc', 'exc') +
       '<textarea class="inp exc" id="f-exc" data-f="exception" placeholder="Blockers, deviations, anything that needs flagging…">' + esc(p.exception) + '</textarea>' +
-      '<div class="hint">Anything written here raises the exception marker on the home card. Leave it empty to clear the flag.</div></div>' +
+      hintHTML('exc', 'Anything written here raises the exception marker on the home card. Leave it empty to clear the flag.') +
+    '</div>' +
 
     '<div class="divider"></div>' +
     '<div class="stamp">CREATED ' + esc(stampTime(p.createdAt)) + '<br>UPDATED ' + esc(stampTime(p.updatedAt)) + '</div>' +
@@ -895,22 +939,26 @@ function folderEditorHTML() {
     '<div class="field"><label class="lbl" for="fe-name">NAME</label>' +
       '<input class="inp" id="fe-name" value="' + esc(f.name) + '" placeholder="Folder name" autocomplete="off"></div>' +
 
-    '<div class="field"><span class="lbl">STARTS AS</span>' +
+    '<div class="field">' + lblHTML('STARTS AS', '', 'starts') +
       '<div class="seg inline">' +
         [['action', 'Actionable'], ['pending', 'Pending'], ['none', 'Neither']].map(([s, l]) =>
           '<button class="' + (f.initialStance === s ? 'active' : '') + '" data-act="folder-initial" data-s="' + s + '">' + l + '</button>').join('') +
       '</div>' +
-      '<div class="hint">Where a brand-new objective sits before anything is ticked.</div></div>' +
+      hintHTML('starts', 'Where a brand-new objective sits before anything is ticked.') +
+    '</div>' +
 
-    '<div class="field"><span class="lbl">TOGGLES — THE STEPS, IN ORDER</span>' +
-      '<div class="hint">★ marks the folder’s <b>done</b> state: hidden by the Open filter and tallied above. Every folder has exactly one.<br><br>' +
+    '<div class="field">' + lblHTML('STEPS, IN ORDER', '', 'steps') +
+      hintHTML('steps',
+      '★ marks the folder’s <b>done</b> state: hidden by the Open filter and tallied above. Every folder has exactly one.<br><br>' +
       'The second button cycles what ticking that step <i>means</i>:<br>' +
       '<b style="color:#C96A5E">!</b> → it becomes <b>Actionable</b> (your move) · ' +
       '<b style="color:#8A63D2">…</b> → it becomes <b>Pending</b> (someone else’s) · ' +
       '<b style="color:#7A7480">–</b> → no bearing.<br><br>' +
       'The <b>furthest-along ticked step wins</b>, so Drafted <b style="color:#8A63D2">…</b> then Checked ' +
       '<b style="color:#C96A5E">!</b> then Pending <b style="color:#8A63D2">…</b> walks an objective through the ' +
-      'progression. Any number of steps can carry the same stance, and nothing is ever in both lists at once.</div></div>' +
+      'progression. Any number of steps can carry the same stance, and nothing is ever in both lists at once.<br><br>' +
+      'Press and hold a row (or drag the ⠿ handle) to reorder. Cards show steps in this order.') +
+    '</div>' +
 
     '<div class="tgl-editor" id="tgl-editor">' + f.toggles.map((t, i) =>
       '<div class="tgl-row" data-row="' + t.key + '" data-i="' + i + '">' +
@@ -934,8 +982,7 @@ function folderEditorHTML() {
           : '') +
       '</div>').join('') +
     '</div>' +
-    '<button class="add-card" data-act="tgl-add">+ Add toggle</button>' +
-    '<div class="hint">Press and hold a row (or drag the ⠿ handle) to reorder. Cards show toggles in this order.</div>' +
+    '<button class="add-card" data-act="tgl-add">+ Add step</button>' +
 
     '<div class="divider"></div>' +
     '<div class="stamp">' + n + (n === 1 ? ' OBJECTIVE' : ' OBJECTIVES') + ' IN THIS FOLDER</div>' +
@@ -1117,12 +1164,13 @@ document.addEventListener('click', e => {
     toast('Showing #' + el.dataset.t + ' across all folders');
     return;
   }
-  if (act === 'archive') {
+  if (act === 'archive' || act === 'menu-archive') {
     const p = byId(el.dataset.id);
     if (!p) return;
     p.archived = !p.archived;
     touch(p);
     ui.swipeId = null;
+    ui.menu = null;
     render(true);
     toast(p.archived ? 'Archived' : 'Restored');
     return;
@@ -1137,17 +1185,31 @@ document.addEventListener('click', e => {
   if (act === 'edit-folder') { ui.editFolder = el.dataset.id; ui.tonePick = null; render(true); return; }
   if (act === 'close-folder') { readFolderFields(); ui.editFolder = null; ui.tonePick = null; render(true); return; }
 
+  if (act === 'hint') { ui.hint = ui.hint === el.dataset.h ? null : el.dataset.h; render(true); return; }
   if (act === 'close-menu') { ui.menu = null; render(true); return; }
+  if (act === 'menu-open-card') { ui.menu = null; view = { screen: 'detail', id: el.dataset.id }; render(true); return; }
+  if (act === 'menu-move') {
+    const p = byId(el.dataset.id);
+    const f = folderById(el.dataset.f);
+    ui.menu = null;
+    if (!p || !f) { render(true); return; }
+    p.folderId = f.id;
+    touch(p);
+    render(true);
+    toast('Moved to ' + f.name);
+    return;
+  }
   if (act === 'menu-edit') { ui.menu = null; ui.editFolder = el.dataset.id; ui.tonePick = null; render(true); return; }
   if (act === 'menu-only') { ui.menu = null; ui.folder = el.dataset.id; cfg.folder = ui.folder; saveCfg(); render(true); return; }
   if (act === 'menu-new') { ui.menu = null; createFolder(); return; }
 
-  if (act === 'pin' || act === 'unpin') {
+  if (act === 'pin' || act === 'unpin' || act === 'menu-pin') {
     e.stopPropagation();
     const p = byId(el.dataset.id);
     if (!p) return;
-    p.pinned = act === 'pin' ? !p.pinned : false;
+    p.pinned = act === 'unpin' ? false : !p.pinned;
     touch(p);
+    ui.menu = null;
     render(true);
     if (!wide() && p.pinned) toast('Pinned — the overlay shows on desktop');
     return;
@@ -1168,7 +1230,7 @@ document.addEventListener('click', e => {
   }
   if (act === 'settings') { ui.modal = 'settings'; render(true); return; }
   if (act === 'close-modal') { readSettingsFields(); ui.modal = null; render(true); return; }
-  if (act === 'ask-delete') { ui.confirm = { kind: 'project', id: el.dataset.id }; render(true); return; }
+  if (act === 'ask-delete' || act === 'menu-delete') { ui.menu = null; ui.confirm = { kind: 'project', id: el.dataset.id }; render(true); return; }
   if (act === 'ask-del-folder') { readFolderFields(); ui.menu = null; ui.confirm = { kind: 'folder', id: el.dataset.id }; render(true); return; }
   if (act === 'close-confirm') { ui.confirm = null; render(true); return; }
   if (act === 'do-delete') { deleteProject(el.dataset.id); return; }
@@ -1661,9 +1723,19 @@ document.addEventListener('focusout', () => {
 
   document.addEventListener('contextmenu', e => {
     const el = folderEl(e.target);
-    if (!el) return;
+    if (el) {
+      e.preventDefault();
+      openFor(el, { x: e.clientX, y: e.clientY });
+      return;
+    }
+    // cards answer right-click too — phones keep the swipe tray instead, so
+    // this is bound to contextmenu only and never to press-and-hold
+    const card = e.target.closest && e.target.closest('.proj-card');
+    if (!card) return;
     e.preventDefault();
-    openFor(el, { x: e.clientX, y: e.clientY });
+    ui.menu = { kind: 'card', id: card.dataset.id, x: e.clientX, y: e.clientY };
+    render(true);
+    placeMenu();
   });
 
   let timer = null, sx = 0, sy = 0;

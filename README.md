@@ -108,6 +108,15 @@ A right-click menu opens **at the pointer** and is nudged back inside the window
 would hang off an edge. A press-and-hold opens the same menu as a bottom sheet, where the
 thumb already is.
 
+**Cards** answer right-click too, with Open, Pin, Archive, a *Move to* list of the other
+folders, and Delete. Bound to `contextmenu` only and never to press-and-hold, so phones
+keep the swipe tray instead.
+
+## Explanations
+
+Field explanations are collapsed behind a small **ⓘ** next to the label, so a screen you
+already understand stays quiet. One opens at a time; the choice is not persisted.
+
 ## Pull to sync
 
 At the top of the list, drag down (or keep scrolling up with a wheel or trackpad) to force

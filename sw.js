@@ -8,7 +8,7 @@
    Fonts stay cache-first (they are immutable and versioned by URL).
    api.github.com is deliberately untouched: sync must always hit the network,
    and an offline fallback there would silently hand back stale data. */
-const CACHE = 'ledger-2.2.0';
+const CACHE = 'ledger-2.3.0';
 const ASSETS = [
   './',
   'index.html',

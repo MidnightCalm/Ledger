@@ -125,7 +125,8 @@ body {
 .seg.folders > button.active { background: var(--purple); color: var(--cream); }
 
 /* ============ project cards ============ */
-.card-list { display: flex; flex-direction: column; gap: 12px; }
+/* the ring is painted outside each wrapper, so leave room for it */
+.card-list { display: flex; flex-direction: column; gap: 15px; padding: 2px; }
 
 /* The tray sits underneath; the card slides left to uncover it.
    The BORDER lives on the wrapper, not the card. The wrapper must clip (the
@@ -133,15 +134,21 @@ body {
    every edge on fractional device-pixel ratios — which is why the borders
    looked thin and uneven on desktop. A border on the clipping element itself
    is never clipped. The card inside is square; the wrapper does the rounding. */
+/* The outline is a box-shadow ring, not a border. A border is part of the box
+   the element clips, so along a rounded corner its 1px gets anti-aliased across
+   sub-pixels and reads thinner than the straight edges — badly so at fractional
+   device-pixel ratios. A shadow ring is painted outside the box, is never
+   clipped, and renders the arc at full weight. 1.5px so the curve has enough
+   pixels to land on. */
 .card-wrap {
   position: relative; overflow: hidden;
   border-radius: 20px;
-  border: 1px solid rgba(244,240,232,0.1);
-  transition: border-color 0.15s ease;
+  box-shadow: 0 0 0 1.5px rgba(244,240,232,0.13);
+  transition: box-shadow 0.15s ease;
 }
-.card-wrap.is-checked { border-color: rgba(138,99,210,0.4); }
-.card-wrap.is-complete { border-color: rgba(212,175,55,0.5); box-shadow: 0 6px 22px rgba(212,175,55,0.06); }
-.card-wrap.is-exception { border-color: rgba(201,106,94,0.6); }
+.card-wrap.is-checked { box-shadow: 0 0 0 1.5px rgba(138,99,210,0.45); }
+.card-wrap.is-complete { box-shadow: 0 0 0 1.5px rgba(212,175,55,0.55), 0 6px 22px rgba(212,175,55,0.07); }
+.card-wrap.is-exception { box-shadow: 0 0 0 1.5px rgba(201,106,94,0.68); }
 .card-wrap.is-archived { opacity: 0.55; }
 .card-wrap.is-complete .pc-name { color: var(--gold-light); }
 .card-actions {
@@ -321,7 +328,20 @@ body {
   font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em;
   color: rgba(212,175,55,0.8);
 }
-.field .hint { font-size: 12px; color: rgba(244,240,232,0.4); line-height: 1.5; }
+.field .hint, .hint {
+  font-size: 12px; color: rgba(244,240,232,0.45); line-height: 1.6;
+  border-left: 2px solid rgba(212,175,55,0.3); padding: 2px 0 2px 10px;
+  animation: ledgerRise 0.16s ease-out;
+}
+.lbl-row { display: flex; align-items: center; gap: 8px; }
+.info-btn {
+  width: 17px; height: 17px; flex-shrink: 0; padding: 0; cursor: pointer;
+  border-radius: 50%; border: 1px solid rgba(212,175,55,0.45);
+  background: none; color: rgba(212,175,55,0.85);
+  font-family: Georgia, serif; font-style: italic; font-size: 11px; line-height: 1;
+}
+.info-btn:hover { border-color: var(--gold); color: var(--gold); }
+.info-btn.on { background: var(--gold); border-color: var(--gold); color: var(--ink); }
 .inp {
   background: rgba(244,240,232,0.06); border: 1px solid rgba(212,175,55,0.25); border-radius: 13px;
   padding: 13px 15px; font-size: 16px; color: var(--cream); outline: none;
@@ -416,6 +436,13 @@ textarea.inp.tall { min-height: 150px; }
 .menu-sheet .m-item.red { color: var(--red-light); }
 .menu-sheet .m-item.dim { color: rgba(244,240,232,0.55); font-weight: 400; }
 .menu-sheet .m-item:active { background: rgba(138,99,210,0.14); }
+.menu-sheet .m-item:hover { background: rgba(138,99,210,0.1); }
+.menu-sheet .m-sub {
+  padding: 10px 18px 5px; font-family: ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.2em; color: rgba(212,175,55,0.7);
+  border-bottom: 1px solid rgba(244,240,232,0.06); background: rgba(244,240,232,0.03);
+}
+.menu-sheet.items { max-height: 78vh; overflow-y: auto; }
 
 /* ============ drag a card onto a folder ============ */
 .drag-ghost {
@@ -589,7 +616,9 @@ body.dragging .proj-card { cursor: grabbing; }
   }
 
   .card-wrap.is-selected {
-    border-color: var(--gold) !important;
+    box-shadow: 0 0 0 1.5px var(--gold) !important;
+  }
+  .card-wrap.is-selected .proj-card {
     background: linear-gradient(150deg, #33204D, #1B1226);
   }
 
@@ -614,8 +643,8 @@ body.dragging .proj-card { cursor: grabbing; }
 
 /* desktop hover niceties */
 @media (hover: hover) {
-  .card-wrap:hover { border-color: rgba(212,175,55,0.45); }
-  .card-wrap.is-exception:hover { border-color: var(--red); }
+  .card-wrap:hover { box-shadow: 0 0 0 1.5px rgba(212,175,55,0.5); }
+  .card-wrap.is-exception:hover { box-shadow: 0 0 0 1.5px var(--red); }
   .add-card:hover { background: rgba(212,175,55,0.08); }
   .icon-btn:hover, .search-pill:hover, .sync-chip:hover { border-color: var(--gold); }
   .tgl:hover { border-color: rgba(212,175,55,0.45); }
