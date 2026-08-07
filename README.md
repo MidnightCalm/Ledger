@@ -17,6 +17,22 @@ ledger-app/
 └── icons/                180 / 192 / 512 px
 ```
 
+## Layout
+
+One codebase, two layouts, chosen by **viewport width** rather than user agent — so a
+narrowed desktop window gets the phone layout, and a tablet gets whichever actually fits.
+The breakpoint is 900px.
+
+- **Under 900px** — one screen at a time. The list fills the screen; tapping a card pushes
+  the detail view over it, with a back button. Search and add live in the floating bottom bar.
+- **900px and up** — two panes. The list stays on the left (with search and add inline at
+  the top) while the detail sits on the right. Selecting a card swaps the right pane instead
+  of navigating, so you can edit one objective while scanning the rest. The selected card is
+  outlined in gold, and edits to a name or exception update the list live as you type.
+
+Crossing the breakpoint re-renders. Both `matchMedia` and `resize` are wired to a single
+guard that only fires when the layout actually changes.
+
 ## How the data works
 
 `localStorage` is always the working copy — the app is fully usable with no network and

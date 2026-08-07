@@ -1,7 +1,7 @@
 /* Ledger service worker — cache-first app shell.
    Deliberately never touches api.github.com: sync must always hit the network,
    and a cached/offline fallback there would silently hand back stale data. */
-const CACHE = 'ledger-v1';
+const CACHE = 'ledger-v2';
 const ASSETS = [
   './',
   'index.html',

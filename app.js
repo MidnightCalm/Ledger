@@ -101,6 +101,11 @@ let ui = {
 let pushTimer = null;
 let pollTimer = null;
 
+/* Layout is chosen by viewport width, not by user agent: a resized desktop
+   window and a tablet both get the layout that actually fits. */
+const mqWide = window.matchMedia('(min-width: 900px)');
+const wide = () => mqWide.matches;
+
 /* ================= project ops ================= */
 const live = () => db.projects.filter(p => !p.deleted);
 const byId = id => db.projects.find(p => p.id === id) || null;
@@ -295,6 +300,7 @@ function cardHTML(p) {
   if (p.checked) cls.push('is-checked');
   if (p.complete) cls.push('is-complete');
   if (hasExc(p)) cls.push('is-exception');
+  if (wide() && p.id === view.id) cls.push('is-selected');
   const bits = [];
   if (p.owner && p.owner.trim()) bits.push(esc(p.owner.trim().toUpperCase()));
   bits.push(relTime(p.updatedAt).toUpperCase());
@@ -328,34 +334,70 @@ function statsText() {
   return parts.join(' · ');
 }
 
-function homeHTML() {
-  const FILTERS = [['all', 'All'], ['open', 'Open'], ['unchecked', 'Unchecked'], ['exceptions', 'Exceptions'], ['complete', 'Complete']];
+const FILTERS = [['all', 'All'], ['open', 'Open'], ['unchecked', 'Unchecked'], ['exceptions', 'Exceptions'], ['complete', 'Complete']];
+
+function brandHTML() {
+  return '<div class="wordmark-wrap">' +
+    '<div class="wordmark">Ledger</div>' +
+    '<div class="gold-rule"></div>' +
+    '<div class="stats" id="stats">' + esc(statsText()) + '</div>' +
+  '</div>';
+}
+function filtersHTML() {
+  return '<div class="seg">' + FILTERS.map(([k, l]) =>
+    '<button class="' + (ui.filter === k ? 'active' : '') + '" data-act="filter" data-f="' + k + '">' + l + '</button>').join('') + '</div>';
+}
+function searchHTML() {
+  return '<div class="search-pill"><input id="q" type="search" placeholder="Search objectives" value="' + esc(ui.q) + '" autocomplete="off" autocorrect="off" spellcheck="false"></div>';
+}
+function fabHTML(small) {
+  return '<button class="fab' + (small ? ' sm' : '') + '" data-act="new" aria-label="Add objective">+</button>';
+}
+
+/* Phone: one screen at a time, list pushed aside by the detail view. */
+function narrowHTML() {
+  if (view.screen === 'detail' && byId(view.id)) return detailHTML(false);
   return '<div class="screen home">' +
-    '<div class="wordmark-wrap">' +
-      '<div class="wordmark">Ledger</div>' +
-      '<div class="gold-rule"></div>' +
-      '<div class="stats" id="stats">' + esc(statsText()) + '</div>' +
+      brandHTML() + syncChipHTML() + filtersHTML() +
+      '<div id="list-host">' + listHTML() + '</div>' +
     '</div>' +
-    syncChipHTML() +
-    '<div class="seg">' + FILTERS.map(([k, l]) =>
-      '<button class="' + (ui.filter === k ? 'active' : '') + '" data-act="filter" data-f="' + k + '">' + l + '</button>').join('') +
+    '<div class="bottom-bar">' + searchHTML() + fabHTML() + '</div>';
+}
+
+/* Desktop: list and detail side by side — no navigation, edit while you scan. */
+function wideHTML() {
+  const p = byId(view.id);
+  return '<div class="split">' +
+    '<div class="pane pane-list">' +
+      brandHTML() + syncChipHTML() +
+      '<div class="search-row">' + searchHTML() + fabHTML(true) + '</div>' +
+      filtersHTML() +
+      '<div id="list-host">' + listHTML() + '</div>' +
     '</div>' +
-    '<div id="list-host">' + listHTML() + '</div>' +
-  '</div>' +
-  '<div class="bottom-bar">' +
-    '<div class="search-pill"><input id="q" type="search" placeholder="Search objectives" value="' + esc(ui.q) + '" autocomplete="off" autocorrect="off" spellcheck="false"></div>' +
-    '<button class="fab" data-act="new" aria-label="Add objective">+</button>' +
+    '<div class="pane pane-detail">' +
+      (p && !p.deleted ? detailHTML(true) : emptyPaneHTML()) +
+    '</div>' +
   '</div>';
 }
 
-function detailHTML() {
+function emptyPaneHTML() {
+  const n = live().length;
+  return '<div class="pane-empty">' +
+    '<div class="pe-mark">' + (n ? '‹' : '+') + '</div>' +
+    '<div>' + (n ? 'Select an objective to see its detail.' : 'No objectives yet.') + '</div>' +
+    (n ? '' : '<button class="btn ghost-gold" data-act="new" style="flex:none;padding-left:22px;padding-right:22px">New objective</button>') +
+  '</div>';
+}
+
+function detailHTML(inPane) {
   const p = byId(view.id);
-  if (!p) return homeHTML();
-  return '<div class="screen detail">' +
+  if (!p) return inPane ? emptyPaneHTML() : narrowHTML();
+  return '<div class="screen detail' + (inPane ? ' in-pane' : '') + '">' +
+    (inPane ? '' :
     '<div class="head">' +
       '<button class="icon-btn" data-act="home" aria-label="Back">‹</button>' +
       '<div class="titles"><div class="sub">Objective</div></div>' +
-    '</div>' +
+    '</div>') +
 
     '<div class="field"><label class="lbl" for="f-name">NAME</label>' +
       '<input class="inp" id="f-name" data-f="name" value="' + esc(p.name) + '" placeholder="What is this objective?" autocomplete="off"></div>' +
@@ -441,7 +483,7 @@ function render(force) {
   if (!force && isTyping()) { ui.needsRender = true; return; }
   ui.needsRender = false;
 
-  let html = view.screen === 'detail' ? detailHTML() : homeHTML();
+  let html = wide() ? wideHTML() : narrowHTML();
   if (ui.modal === 'settings') html += settingsHTML();
   if (ui.confirm) html += confirmHTML();
   if (ui.toastMsg) html += '<div class="toast' + (ui.toastBad ? ' bad' : '') + '">' + esc(ui.toastMsg) + '</div>';
@@ -498,7 +540,13 @@ document.addEventListener('click', e => {
     return;
   }
 
-  if (act === 'sync-now') { readSettingsFields(); doSync({ loud: true }); return; }
+  if (act === 'sync-now') {
+    readSettingsFields();
+    if (!cfg.token) { toast('Paste a token first', true); return; }
+    if (!cfg.gistId) { toast('Create a Gist, or paste an existing ID', true); return; }
+    doSync({ loud: true });
+    return;
+  }
   if (act === 'unlink') { cfg.token = ''; cfg.gistId = ''; cfg.lastSyncAt = 0; saveCfg(); ui.syncState = 'unlinked'; render(true); toast('Unlinked'); return; }
   if (act === 'export') { doExport(); return; }
   if (act === 'import') { doImport(); return; }
@@ -510,13 +558,17 @@ document.addEventListener('click', e => {
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.id === 'q') { ui.q = el.value; renderList(); return; }
-  if (el.id === 'f-token') { cfg.token = el.value.trim(); saveCfg(); return; }
-  if (el.id === 'f-gist') { cfg.gistId = parseGistId(el.value); saveCfg(); return; }
+  if (el.id === 'f-token') { cfg.token = el.value.trim(); saveCfg(); refreshSettingsButtons(); return; }
+  if (el.id === 'f-gist') { cfg.gistId = parseGistId(el.value); saveCfg(); refreshSettingsButtons(); return; }
   if (!el.dataset || !el.dataset.f) return;
   const p = byId(view.id);
   if (!p) return;
   p[el.dataset.f] = el.value;
   touch(p);
+  // On desktop the list sits beside the field being edited, so keep it live.
+  // Safe for the caret: the focused input is in the detail pane, and only the
+  // list subtree is replaced.
+  if (wide()) renderList();
 });
 
 document.addEventListener('focusout', () => {
@@ -544,6 +596,15 @@ function readSettingsFields() {
   if (t) cfg.token = t.value.trim();
   if (g) cfg.gistId = parseGistId(g.value);
   saveCfg();
+}
+
+/* Typing in the token/gist fields deliberately does not re-render (it would
+   eat the caret), so the buttons that depend on them are updated by hand. */
+function refreshSettingsButtons() {
+  const c = document.querySelector('[data-act="create-gist"]');
+  const s = document.querySelector('[data-act="sync-now"]');
+  if (c) c.disabled = !cfg.token;
+  if (s) s.disabled = !linked();
 }
 
 async function doCreateGist(btn) {
@@ -602,6 +663,17 @@ function doImport() {
 }
 
 /* ================= lifecycle ================= */
+/* matchMedia 'change' is not dependable everywhere, so the resize event backs
+   it up. Both funnel through one guard, so a re-render only happens when the
+   layout actually crosses the breakpoint. */
+let lastWide = wide();
+function onViewportChange() {
+  if (wide() === lastWide) return;
+  lastWide = wide();
+  render(true);
+}
+mqWide.addEventListener('change', onViewportChange);
+window.addEventListener('resize', onViewportChange);
 window.addEventListener('online', () => { ui.syncState = 'idle'; doSync(); });
 window.addEventListener('offline', () => { ui.syncState = 'offline'; renderSyncChip(); });
 document.addEventListener('visibilitychange', () => {
