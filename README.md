@@ -149,6 +149,16 @@ model involved — the signal is already in your own data, and a tag scores on:
 
 Gold chips were inferred (1 or 2); plain chips are just your common tags.
 
+### Popping it out
+
+The **⧉** button in the panel header opens the pinned list as a real always-on-top OS
+window via the Document Picture-in-Picture API, so it stays visible when Ledger itself is
+minimised — something a DOM panel can never do. The window shares the app's click
+delegation and re-renders with the main window, so unpinning in either place updates both.
+
+Chromium only (Chrome/Edge desktop); the button is hidden where the API is missing.
+Opening it requires a real click, which is why it is a button rather than automatic.
+
 ## Pinned overlay (desktop)
 
 Pin an objective from its detail pane and it appears in a floating panel above everything

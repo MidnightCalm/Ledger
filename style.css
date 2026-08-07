@@ -517,6 +517,21 @@ body.dragging .proj-card { cursor: grabbing; }
 }
 .pin-x:hover { color: var(--red-light); background: rgba(201,106,94,0.15); }
 
+/* ============ popped-out pinned window ============ */
+/* overrides the fixed full-bleed body rule for the PiP document */
+.pip-body {
+  position: static; inset: auto; overflow: hidden;
+  height: 100vh; display: flex; flex-direction: column;
+  background: #0B0910; margin: 0;
+}
+.pip-head {
+  flex-shrink: 0; padding: 11px 14px;
+  border-bottom: 1px solid rgba(244,240,232,0.09);
+  background: rgba(23,17,31,0.9);
+}
+.pip-body .pin-body { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+.pip-empty { padding: 26px 18px; text-align: center; font-size: 13px; line-height: 1.6; color: rgba(244,240,232,0.4); }
+
 /* ============ pull to sync ============ */
 .pull-ind {
   position: fixed; top: 6px; left: 50%; z-index: 120; pointer-events: none;

@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -751,23 +751,72 @@ function suggestHTML(p) {
 const pinned = () => live().filter(p => p.pinned && !p.archived)
   .sort((a, b) => (hasExc(b) ? 1 : 0) - (hasExc(a) ? 1 : 0) || (b.updatedAt || 0) - (a.updatedAt || 0));
 
+function pinRowHTML(p) {
+  return '<div class="pin-row' + (p.id === view.id ? ' on' : '') + '" data-act="open" data-id="' + p.id + '">' +
+    (hasExc(p) ? '<span class="pin-exc">!</span>' : '') +
+    '<span class="pin-name">' + esc(p.name.trim() || 'Untitled') + '</span>' +
+    '<button class="pin-x" data-act="unpin" data-id="' + p.id + '" aria-label="Unpin">✕</button>' +
+  '</div>';
+}
+
 function pinPanelHTML() {
   const items = pinned();
-  if (!wide() || !items.length) return '';
+  if (!wide() || !items.length || pipOpen()) return '';   // popped out: don't draw it twice
   const g = cfg.panel;
+  const canPop = !!window.documentPictureInPicture;
   return '<div class="pin-panel' + (g.collapsed ? ' collapsed' : '') + '" id="pin-panel"' +
     ' style="left:' + g.x + 'px;bottom:' + g.y + 'px;width:' + g.w + 'px;' + (g.collapsed ? '' : 'height:' + g.h + 'px;') + '">' +
     '<div class="pin-head" data-pinhead="1">' +
       '<span class="pin-title">PINNED · ' + items.length + '</span>' +
+      (canPop ? '<button class="pin-btn" data-act="pip" title="Pop out into an always-on-top window" aria-label="Pop out">⧉</button>' : '') +
       '<button class="pin-btn" data-act="pin-collapse" aria-label="Collapse">' + (g.collapsed ? '▲' : '▼') + '</button>' +
     '</div>' +
-    (g.collapsed ? '' : '<div class="pin-body">' + items.map(p =>
-      '<div class="pin-row' + (p.id === view.id ? ' on' : '') + '" data-act="open" data-id="' + p.id + '">' +
-        (hasExc(p) ? '<span class="pin-exc">!</span>' : '') +
-        '<span class="pin-name">' + esc(p.name.trim() || 'Untitled') + '</span>' +
-        '<button class="pin-x" data-act="unpin" data-id="' + p.id + '" aria-label="Unpin">✕</button>' +
-      '</div>').join('') + '</div>') +
+    (g.collapsed ? '' : '<div class="pin-body">' + items.map(pinRowHTML).join('') + '</div>') +
   '</div>';
+}
+
+/* ================= popped-out pinned window =================
+   Document Picture-in-Picture gives a genuine OS-level window that floats above
+   everything and survives minimising Ledger — a DOM panel never could. Chromium
+   only, and it needs a user gesture, so it hangs off a button. */
+let pipWin = null;
+const pipOpen = () => !!(pipWin && !pipWin.closed);
+
+async function openPip() {
+  if (!window.documentPictureInPicture) { toast('This browser has no pop-out support', true); return; }
+  if (pipOpen()) { pipWin.focus(); return; }
+  const g = cfg.panel;
+  try {
+    pipWin = await documentPictureInPicture.requestWindow({
+      width: Math.max(240, Math.round(g.w)),
+      height: Math.max(220, Math.round(g.h))
+    });
+  } catch (err) {
+    pipWin = null;
+    toast('Could not open the pop-out', true);
+    return;
+  }
+  const d = pipWin.document;
+  d.title = 'Ledger — Pinned';
+  const link = d.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = new URL('style.css', location.href).href;
+  d.head.appendChild(link);
+  d.body.className = 'pip-body';
+  d.addEventListener('click', handleClick);      // same delegation, second document
+  pipWin.addEventListener('pagehide', () => { pipWin = null; render(true); });
+  renderPip();
+  render(true);
+}
+
+function renderPip() {
+  if (!pipOpen()) return;
+  const items = pinned();
+  pipWin.document.body.innerHTML =
+    '<div class="pip-head"><span class="pin-title">PINNED · ' + items.length + '</span></div>' +
+    '<div class="pin-body">' +
+      (items.length ? items.map(pinRowHTML).join('') : '<div class="pip-empty">Nothing pinned.<br>Pin an objective in Ledger and it appears here.</div>') +
+    '</div>';
 }
 
 function menuHTML() {
@@ -1091,6 +1140,7 @@ function render(force) {
     const el = $('#f-name');
     if (el) el.focus();
   }
+  renderPip();
   document.dispatchEvent(new Event('ledger:rendered'));
 }
 
@@ -1139,7 +1189,7 @@ function renderSyncChip() {
 }
 
 /* ================= events ================= */
-document.addEventListener('click', e => {
+function handleClick(e) {
   // A drag that ended just now must not also register as a tap. This expires on
   // a clock rather than on the next click: if the browser fires no click after
   // the drag, a flag would sit there and eat an unrelated tap later.
@@ -1319,7 +1369,9 @@ document.addEventListener('click', e => {
   if (act === 'export') { doExport(); return; }
   if (act === 'import') { doImport(); return; }
   if (act === 'create-gist') { doCreateGist(el); return; }
-});
+  if (act === 'pip') { openPip(); return; }
+}
+document.addEventListener('click', handleClick);
 
 /* Field edits write straight through to the model — no re-render, so the
    caret and scroll position survive. */
