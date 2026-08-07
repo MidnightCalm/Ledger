@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -30,16 +30,23 @@ const TOMBSTONE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const PROJ_FIELDS = ['id', 'folderId', 'name', 'owner', 'notes', 'exception', 'tags', 'flags', 'pinned', 'archived', 'deleted', 'createdAt', 'updatedAt'];
 const PANEL_DEF = { x: 20, y: 20, w: 270, h: 230, collapsed: false };
-const FOLDER_FIELDS = ['id', 'name', 'toggles', 'doneKey', 'actionKey', 'waitKey', 'order', 'deleted', 'createdAt', 'updatedAt'];
+const FOLDER_FIELDS = ['id', 'name', 'toggles', 'doneKey', 'initialStance', 'order', 'deleted', 'createdAt', 'updatedAt'];
 const FILTER_KEYS = ['all', 'open', 'action', 'waiting', 'exceptions', 'done', 'archived'];
-/* A folder can nominate one toggle per role. done drives the Open filter and the
-   stats; action and waiting split the open work into "mine to move" and
-   "parked on someone else". */
-const ROLES = [
-  { key: 'doneKey', glyph: '★', label: 'Done', tone: '#D4AF37' },
-  { key: 'actionKey', glyph: '!', label: 'Needs action', tone: '#C96A5E' },
-  { key: 'waitKey', glyph: '…', label: 'Waiting on someone', tone: '#8A63D2' }
+
+/* Toggles are steps in order, and each carries a stance: after ticking it, is
+   the ball in your court or someone else's? The furthest-along ticked step wins,
+   so Drafted (pending) → Checked (actionable) → Pending (pending) reads as a
+   progression rather than a set of independent flags. An objective therefore has
+   exactly one stance and can never appear in both lists.
+   With nothing ticked yet, the folder's initialStance applies. */
+const STANCES = [
+  { id: 'none', glyph: '–', label: 'No bearing on Actionable / Pending', tone: '#7A7480' },
+  { id: 'action', glyph: '!', label: 'Ticking this makes it Actionable — your move', tone: '#C96A5E' },
+  { id: 'pending', glyph: '…', label: 'Ticking this makes it Pending — waiting on someone', tone: '#8A63D2' }
 ];
+/* never returns -1: an unknown stance reads as 'none' rather than crashing the
+   editor on STANCES[-1] */
+const stanceOrder = s => Math.max(0, STANCES.findIndex(x => x.id === s));
 const SWIPE_W = 168;    // width of the revealed action tray
 const SWIPE_TRIGGER = 58;
 /* Long enough to swallow the synthetic click a gesture emits on release (that
@@ -88,7 +95,8 @@ function hexToRgba(hex, a) {
 function normalizeToggle(t, i) {
   const label = typeof t.label === 'string' && t.label.trim() ? t.label : 'Toggle ' + (i + 1);
   const tone = isHex(t.tone) ? t.tone.toUpperCase() : (TONE_HEX[t.tone] || DEFAULT_TONE);
-  return { key: t.key || uid('t'), label, tone };
+  const stance = STANCES.some(s => s.id === t.stance) ? t.stance : 'none';
+  return { key: t.key || uid('t'), label, tone, stance };
 }
 
 function normalizeFolder(f, i) {
@@ -96,13 +104,20 @@ function normalizeFolder(f, i) {
   const list = toggles.length ? toggles : [{ key: uid('t'), label: 'Done', tone: 'gold' }];
   const has = k => list.some(t => t.key === k);
   const doneKey = has(f.doneKey) ? f.doneKey : list[list.length - 1].key;
-  const actionKey = has(f.actionKey) && f.actionKey !== doneKey ? f.actionKey : null;
-  const waitKey = has(f.waitKey) && f.waitKey !== doneKey && f.waitKey !== actionKey ? f.waitKey : null;
+  // v2.1 stored one action/waiting toggle per folder; fold those into stances
+  if (f.actionKey || f.waitKey) {
+    for (const t of list) {
+      if (t.stance !== 'none') continue;
+      if (t.key === f.actionKey) t.stance = 'action';
+      else if (t.key === f.waitKey) t.stance = 'pending';
+    }
+  }
   return {
     id: f.id || uid('f'),
     name: typeof f.name === 'string' ? f.name : '',
     toggles: list,
-    doneKey, actionKey, waitKey,
+    doneKey,
+    initialStance: (f.initialStance === 'pending' || f.initialStance === 'none') ? f.initialStance : 'action',
     order: typeof f.order === 'number' ? f.order : i,
     deleted: !!f.deleted,
     createdAt: f.createdAt || now(),
@@ -230,7 +245,11 @@ function canon(d) {
     v: 2,
     folders: folders.map(f => {
       const o = {};
-      for (const k of FOLDER_FIELDS) o[k] = k === 'toggles' ? f.toggles.map(t => ({ key: t.key, label: t.label, tone: t.tone })) : f[k];
+      for (const k of FOLDER_FIELDS) {
+        o[k] = k === 'toggles'
+          ? f.toggles.map(t => ({ key: t.key, label: t.label, tone: t.tone, stance: t.stance }))
+          : f[k];
+      }
       return o;
     }),
     projects: projects.map(p => {
@@ -323,12 +342,20 @@ function isDone(p) {
   const f = folderOf(p);
   return !!(f && p.flags[f.doneKey]);
 }
-function inRole(p, roleKey) {
+/* The furthest-along ticked step decides where an objective stands. Exactly one
+   stance, so it can never show up under both Actionable and Pending. */
+function stanceOf(p) {
+  if (isDone(p)) return 'done';
   const f = folderOf(p);
-  return !!(f && f[roleKey] && p.flags[f[roleKey]]);
+  if (!f) return 'none';
+  for (let i = f.toggles.length - 1; i >= 0; i--) {
+    const t = f.toggles[i];
+    if (t.stance !== 'none' && p.flags[t.key]) return t.stance;
+  }
+  return f.initialStance;               // nothing ticked yet
 }
-const isAction = p => inRole(p, 'actionKey') && !isDone(p);
-const isWaiting = p => inRole(p, 'waitKey') && !isDone(p);
+const isAction = p => stanceOf(p) === 'action';
+const isWaiting = p => stanceOf(p) === 'pending';
 
 /* The selected folder, or null when the All chip is active. */
 function currentFolder() {
@@ -354,7 +381,7 @@ function createFolder() {
   const f = normalizeFolder({
     name: 'New folder',
     toggles: [
-      { key: uid('t'), label: 'Checked', tone: 'purple' },
+      { key: uid('t'), label: 'Checked', tone: 'purple', stance: 'action' },
       { key: uid('t'), label: 'Done', tone: 'gold' }
     ],
     order
@@ -625,7 +652,11 @@ function filtered() {
       if (tagOnly) {
         if (!p.tags.some(t => t.includes(q))) return false;
       } else {
-        const hay = (p.name + ' ' + p.owner + ' ' + p.notes + ' ' + p.exception + ' ' + p.tags.join(' ')).toLowerCase();
+        // ticked steps are searchable too: "drafted" finds everything Drafted
+        const f = folderOf(p);
+        const steps = f ? f.toggles.filter(t => p.flags[t.key]).map(t => t.label).join(' ') : '';
+        const hay = (p.name + ' ' + p.owner + ' ' + p.notes + ' ' + p.exception + ' ' +
+                     p.tags.join(' ') + ' ' + steps + ' ' + (f ? f.name : '')).toLowerCase();
         if (!hay.includes(q)) return false;
       }
     }
@@ -639,7 +670,8 @@ function filtered() {
 
 function cardHTML(p) {
   const f = folderOf(p);
-  const cls = ['proj-card'];
+  // state classes live on the wrapper, which owns the border — see cardHTML notes
+  const cls = ['card-wrap'];
   if (isDone(p)) cls.push('is-complete');
   else if (Object.keys(p.flags).length) cls.push('is-checked');
   if (hasExc(p)) cls.push('is-exception');
@@ -657,12 +689,14 @@ function cardHTML(p) {
     : '';
 
   const open = ui.swipeId === p.id;
-  return '<div class="card-wrap' + (open ? ' open' : '') + '" data-wrap="' + p.id + '">' +
+  if (open) cls.push('open');
+  if (p.archived) cls.push('is-archived');
+  return '<div class="' + cls.join(' ') + '" data-wrap="' + p.id + '">' +
     '<div class="card-actions">' +
       '<button class="swipe-btn arch" data-act="archive" data-id="' + p.id + '">' + (p.archived ? 'Restore' : 'Archive') + '</button>' +
       '<button class="swipe-btn del" data-act="ask-delete" data-id="' + p.id + '">Delete</button>' +
     '</div>' +
-    '<div class="' + cls.join(' ') + '" data-act="open" data-id="' + p.id + '"' +
+    '<div class="proj-card" data-act="open" data-id="' + p.id + '"' +
       (open ? ' style="transform:translateX(-' + SWIPE_W + 'px)"' : '') + '>' +
       '<div class="pc-head"><div class="pc-titles">' +
       '<div class="pc-name">' + esc(p.name.trim() || 'Untitled objective') + '</div>' +
@@ -680,10 +714,11 @@ function listHTML() {
     const anyHere = live().some(p => ui.folder === 'all' || p.folderId === ui.folder);
     const f = currentFolder();
     let msg;
+    const noStance = st => f && f.initialStance !== st && !f.toggles.some(t => t.stance === st);
     if (!anyHere) msg = 'Nothing here yet.<br>Tap + to add an objective.';
-    // a role-based filter with no toggle wearing that role is a setup gap, not an empty list
-    else if (ui.filter === 'action' && f && !f.actionKey) msg = 'No toggle in “' + esc(f.name) + '” is marked <b style="color:#C96A5E">! needs action</b> yet.<br>Set one in the folder editor.';
-    else if (ui.filter === 'waiting' && f && !f.waitKey) msg = 'No toggle in “' + esc(f.name) + '” is marked <b style="color:#8A63D2">… waiting</b> yet.<br>Set one in the folder editor.';
+    // a stance filter that nothing in this folder can ever reach is a setup gap
+    else if (ui.filter === 'action' && noStance('action')) msg = 'Nothing in “' + esc(f.name) + '” can be <b style="color:#C96A5E">Actionable</b> yet.<br>Give a step the <b>!</b> stance, or set the folder to start as Actionable.';
+    else if (ui.filter === 'waiting' && noStance('pending')) msg = 'Nothing in “' + esc(f.name) + '” can be <b style="color:#8A63D2">Pending</b> yet.<br>Give a step the <b>…</b> stance in the folder editor.';
     else msg = 'Nothing matches this view.';
     return '<div class="empty-note">' + msg + '</div>';
   }
@@ -739,8 +774,12 @@ function menuHTML() {
   const f = ui.menu && folderById(ui.menu.id);
   if (!f) return '';
   const canDelete = liveFolders().length > 1;
+  // a right-click belongs under the cursor; a press-and-hold belongs in the
+  // bottom sheet where the thumb already is
+  const at = ui.menu.x != null;
   return '<div class="menu-scrim" data-act="close-menu"></div>' +
-    '<div class="menu-sheet items">' +
+    '<div class="menu-sheet items' + (at ? ' at-cursor' : '') + '" id="menu-sheet"' +
+      (at ? ' style="left:' + ui.menu.x + 'px;top:' + ui.menu.y + 'px"' : '') + '>' +
       '<div class="m-title">' + esc(f.name || 'Untitled') + '</div>' +
       '<button class="m-item gold" data-act="menu-edit" data-id="' + f.id + '">Edit folder &amp; toggles</button>' +
       '<button class="m-item" data-act="menu-only" data-id="' + f.id + '">Show only this folder</button>' +
@@ -856,21 +895,35 @@ function folderEditorHTML() {
     '<div class="field"><label class="lbl" for="fe-name">NAME</label>' +
       '<input class="inp" id="fe-name" value="' + esc(f.name) + '" placeholder="Folder name" autocomplete="off"></div>' +
 
-    '<div class="field"><span class="lbl">TOGGLES</span>' +
-      '<div class="hint">These are the switches every objective in this folder gets. Each can be given a role:<br>' +
-      '<b style="color:#D4AF37">★ done</b> — hidden by the Open filter and tallied above (every folder needs one).<br>' +
-      '<b style="color:#C96A5E">! needs action</b> — feeds the <b>Actionable</b> filter, your to-do list.<br>' +
-      '<b style="color:#8A63D2">… waiting</b> — feeds the <b>Pending</b> filter, parked on someone else.<br>' +
-      'The last two are optional; leave them unset in folders where they make no sense.</div></div>' +
+    '<div class="field"><span class="lbl">STARTS AS</span>' +
+      '<div class="seg inline">' +
+        [['action', 'Actionable'], ['pending', 'Pending'], ['none', 'Neither']].map(([s, l]) =>
+          '<button class="' + (f.initialStance === s ? 'active' : '') + '" data-act="folder-initial" data-s="' + s + '">' + l + '</button>').join('') +
+      '</div>' +
+      '<div class="hint">Where a brand-new objective sits before anything is ticked.</div></div>' +
+
+    '<div class="field"><span class="lbl">TOGGLES — THE STEPS, IN ORDER</span>' +
+      '<div class="hint">★ marks the folder’s <b>done</b> state: hidden by the Open filter and tallied above. Every folder has exactly one.<br><br>' +
+      'The second button cycles what ticking that step <i>means</i>:<br>' +
+      '<b style="color:#C96A5E">!</b> → it becomes <b>Actionable</b> (your move) · ' +
+      '<b style="color:#8A63D2">…</b> → it becomes <b>Pending</b> (someone else’s) · ' +
+      '<b style="color:#7A7480">–</b> → no bearing.<br><br>' +
+      'The <b>furthest-along ticked step wins</b>, so Drafted <b style="color:#8A63D2">…</b> then Checked ' +
+      '<b style="color:#C96A5E">!</b> then Pending <b style="color:#8A63D2">…</b> walks an objective through the ' +
+      'progression. Any number of steps can carry the same stance, and nothing is ever in both lists at once.</div></div>' +
 
     '<div class="tgl-editor" id="tgl-editor">' + f.toggles.map((t, i) =>
       '<div class="tgl-row" data-row="' + t.key + '" data-i="' + i + '">' +
         '<span class="grip" data-grip="' + t.key + '" aria-hidden="true">⠿</span>' +
         '<button class="tone-swatch" style="background:' + t.tone + '" data-act="tgl-tone" data-k="' + t.key + '" aria-label="Change colour"></button>' +
         '<input class="inp" data-tglabel="' + t.key + '" value="' + esc(t.label) + '" placeholder="Label" autocomplete="off">' +
-        ROLES.map(r =>
-          '<button class="star role-' + r.key + (f[r.key] === t.key ? ' on' : '') + '" style="--t:' + r.tone + '"' +
-          ' data-act="tgl-role" data-role="' + r.key + '" data-k="' + t.key + '" title="' + r.label + '" aria-label="' + r.label + '">' + r.glyph + '</button>').join('') +
+        '<button class="star' + (f.doneKey === t.key ? ' on' : '') + '" style="--t:#D4AF37"' +
+        ' data-act="tgl-done" data-k="' + t.key + '" title="Done state for this folder" aria-label="Done state">★</button>' +
+        (() => {
+          const s = STANCES[stanceOrder(t.stance)];
+          return '<button class="star stance' + (t.stance === 'none' ? '' : ' on') + '" style="--t:' + s.tone + '"' +
+            ' data-act="tgl-stance" data-k="' + t.key + '" title="' + esc(s.label) + '" aria-label="' + esc(s.label) + '">' + s.glyph + '</button>';
+        })() +
         (f.toggles.length > 1 ? '<button class="close-btn" data-act="tgl-del" data-k="' + t.key + '" aria-label="Remove toggle">✕</button>' : '') +
         (ui.tonePick === t.key
           ? '<div class="palette">' + PALETTE.map(h =>
@@ -1019,6 +1072,17 @@ function renderSuggest() {
   }
 }
 
+/* Nudge a cursor-anchored menu back inside the window if it would hang off. */
+function placeMenu() {
+  const el = $('#menu-sheet');
+  if (!el || !el.classList.contains('at-cursor') || !ui.menu) return;
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const x = Math.max(8, Math.min(window.innerWidth - w - 8, ui.menu.x));
+  const y = Math.max(8, Math.min(window.innerHeight - h - 8, ui.menu.y));
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+}
+
 function renderSyncChip() {
   const row = document.querySelector('.sync-row');
   if (!row) return;
@@ -1142,26 +1206,33 @@ document.addEventListener('click', e => {
     ui.tonePick = null;
     touch(f); render(true); return;
   }
-  if (act === 'tgl-role') {
+  if (act === 'tgl-done') {
     readFolderFields();
     const f = folderById(ui.editFolder);
     if (!f) return;
-    const role = el.dataset.role, k = el.dataset.k;
-    if (f[role] === k) {
-      // done always needs an owner; the other two are optional
-      if (role !== 'doneKey') f[role] = null;
-    } else {
-      for (const r of ROLES) if (f[r.key] === k && r.key !== role) f[r.key] = null;  // one role per toggle
-      f[role] = k;
-    }
-    if (!f.toggles.some(t => t.key === f.doneKey)) f.doneKey = f.toggles[f.toggles.length - 1].key;
+    f.doneKey = el.dataset.k;             // exactly one per folder, always owned
+    touch(f); render(true); return;
+  }
+  if (act === 'tgl-stance') {
+    readFolderFields();
+    const f = folderById(ui.editFolder);
+    const t = f && f.toggles.find(x => x.key === el.dataset.k);
+    if (!t) return;
+    t.stance = STANCES[(stanceOrder(t.stance) + 1) % STANCES.length].id;   // – → ! → … → –
+    touch(f); render(true); return;
+  }
+  if (act === 'folder-initial') {
+    readFolderFields();
+    const f = folderById(ui.editFolder);
+    if (!f) return;
+    f.initialStance = el.dataset.s;
     touch(f); render(true); return;
   }
   if (act === 'tgl-add') {
     readFolderFields();
     const f = folderById(ui.editFolder);
     if (!f) return;
-    f.toggles.push({ key: uid('t'), label: 'New toggle', tone: 'cream' });
+    f.toggles.push(normalizeToggle({ label: 'New toggle', tone: '#F4F0E8' }, f.toggles.length));
     touch(f); render(true); return;
   }
   if (act === 'tgl-del') {
@@ -1504,16 +1575,86 @@ document.addEventListener('focusout', () => {
   document.addEventListener('ledger:rendered', watch);
 })();
 
+/* ================= pull down at the top to sync =================
+   Works with a finger (drag past the top of the list) and with a wheel or
+   trackpad (keep scrolling up once already at the top). */
+(() => {
+  const THRESH = 74;
+  let sc = null, startY = 0, dist = 0, armed = false, ind = null;
+
+  const scrollerOf = t => t && t.closest && t.closest('.pane-list, .screen');
+
+  function indicator() {
+    if (!ind) {
+      ind = document.createElement('div');
+      ind.className = 'pull-ind';
+      document.body.appendChild(ind);
+    }
+    return ind;
+  }
+  function show(d, ready) {
+    const el = indicator();
+    el.textContent = ready ? '↑  release to sync' : '↓  pull to sync';
+    el.classList.toggle('ready', ready);
+    el.style.opacity = Math.min(1, d / 40);
+    el.style.transform = 'translateX(-50%) translateY(' + Math.min(d * 0.5, 46) + 'px)';
+  }
+  function hide() {
+    if (!ind) return;
+    ind.style.opacity = '0';
+    ind.style.transform = 'translateX(-50%) translateY(0)';
+  }
+
+  document.addEventListener('pointerdown', e => {
+    const s = scrollerOf(e.target);
+    if (!s || s.scrollTop > 0) return;
+    if (e.target.closest('.tgl, .tag, .swipe-btn, button, input, textarea, select')) return;
+    sc = s; startY = e.clientY; dist = 0; armed = false;
+  });
+
+  document.addEventListener('pointermove', e => {
+    if (!sc) return;
+    if (sc.scrollTop > 0) { sc = null; hide(); return; }
+    dist = e.clientY - startY;
+    if (dist <= 0) { if (armed) { armed = false; hide(); } return; }
+    armed = true;
+    show(dist, dist >= THRESH);
+  });
+
+  function release() {
+    if (!sc) return;
+    const go = armed && dist >= THRESH;
+    sc = null; armed = false;
+    hide();
+    if (go) doSync({ loud: true });
+  }
+  document.addEventListener('pointerup', release);
+  document.addEventListener('pointercancel', release);
+
+  /* wheel / trackpad: keep pushing up once the list is already at the top */
+  let acc = 0, decay = null;
+  document.addEventListener('wheel', e => {
+    const s = scrollerOf(e.target);
+    if (!s || s.scrollTop > 0 || e.deltaY >= 0) { acc = 0; hide(); return; }
+    acc += -e.deltaY;
+    show(acc * 0.5, acc * 0.5 >= THRESH);
+    clearTimeout(decay);
+    decay = setTimeout(() => { acc = 0; hide(); }, 400);
+    if (acc * 0.5 >= THRESH) { acc = 0; clearTimeout(decay); hide(); doSync({ loud: true }); }
+  }, { passive: true });
+})();
+
 /* ================= folder context menu =================
    Right-click on desktop, press-and-hold on a phone — both land on the folder
    itself rather than making you hunt for a settings button elsewhere. */
 (() => {
   const folderEl = t => t && t.closest && t.closest('[data-act="folder"], .rail-row[data-id]');
-  function openFor(el) {
+  function openFor(el, pt) {
     const id = el.dataset.id;
     if (!id || id === 'all') return false;
-    ui.menu = { kind: 'folder', id };
+    ui.menu = { kind: 'folder', id, x: pt ? pt.x : null, y: pt ? pt.y : null };
     render(true);
+    placeMenu();
     if (navigator.vibrate) navigator.vibrate(8);
     return true;
   }
@@ -1522,7 +1663,7 @@ document.addEventListener('focusout', () => {
     const el = folderEl(e.target);
     if (!el) return;
     e.preventDefault();
-    openFor(el);
+    openFor(el, { x: e.clientX, y: e.clientY });
   });
 
   let timer = null, sx = 0, sy = 0;

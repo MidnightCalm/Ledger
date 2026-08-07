@@ -59,24 +59,61 @@ Press and hold a toggle row (or drag its ⠿ handle) to reorder; cards render to
 that order. The colour swatch opens a palette with a native colour picker at the end, and
 colours are stored as hex, so any colour is expressible.
 
-### Toggle roles
+### Steps and stances
 
-Each toggle can be given one role, and a folder holds at most one of each:
+Toggles are **steps in order**, and each carries a stance — what ticking it means for who
+holds the ball:
 
-| Role | Glyph | Effect |
+| Stance | Glyph | Meaning |
 | --- | --- | --- |
-| Done | ★ | hidden by the **Open** filter, tallied in the stats line. Every folder needs one. |
-| Needs action | ! | feeds the **Actionable** filter — your to-do list |
-| Waiting | … | feeds the **Pending** filter — parked on someone else |
+| Actionable | ! | your move — feeds the **Actionable** filter |
+| Pending | … | waiting on someone else — feeds the **Pending** filter |
+| Neither | – | no bearing on either filter |
 
-The last two are optional. If a filter is selected in a folder that has not assigned that
-role, the empty state says so rather than just showing a blank list.
+Separately, ★ marks the folder's **done** step: hidden by the Open filter and tallied in
+the stats. Exactly one per folder, always assigned.
+
+**The furthest-along ticked step wins.** So a folder of
+`Drafted (…) → Checked (!) → Pending (…) → Complete (★)` walks an objective through:
+
+| State | Stance |
+| --- | --- |
+| nothing ticked | the folder's **Starts as** setting (default Actionable) |
+| Drafted | Pending |
+| Drafted + Checked | Actionable |
+| Drafted + Checked + Pending | Pending |
+| … + Complete | Done |
+
+Any number of steps can share a stance — a step literally named "Pending" can be pending,
+and you can have several actionable stages. Because the stance is derived from one winning
+step rather than from independent flags, an objective has exactly one stance and **can
+never appear under both Actionable and Pending**.
+
+Selecting a stance filter in a folder where nothing could ever reach it says so rather than
+showing a blank list.
+
+### Searching steps
+
+Ticked steps are searchable text. Searching `drafted` returns everything with the Drafted
+step ticked, alongside the usual name/notes/tags matching — the step labels do not appear
+as tag chips, they just match.
 
 ### Right-click / press-and-hold
 
 Right-click a folder (desktop) or press and hold it (phone) for Edit, Show only this
 folder, New folder, and Delete — no hunting for a settings button. The **All** chip has no
 menu, since there is nothing to edit.
+
+A right-click menu opens **at the pointer** and is nudged back inside the window if it
+would hang off an edge. A press-and-hold opens the same menu as a bottom sheet, where the
+thumb already is.
+
+## Pull to sync
+
+At the top of the list, drag down (or keep scrolling up with a wheel or trackpad) to force
+a sync. An indicator appears once you pass the threshold. Sync still runs automatically on
+launch, on foreground, after edits and once a minute — this is for when you want to be
+sure right now.
 
 Deleting a folder moves its objectives to the first remaining folder rather than destroying
 them; they keep their text but lose that folder's toggle states. The last folder cannot be

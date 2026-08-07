@@ -128,9 +128,22 @@ body {
 .card-list { display: flex; flex-direction: column; gap: 12px; }
 
 /* The tray sits underneath; the card slides left to uncover it.
-   The wrap's radius is 1px larger than the card's so the clip does not shave
-   the card's 1px border along the corner curves. */
-.card-wrap { position: relative; border-radius: 21px; overflow: hidden; }
+   The BORDER lives on the wrapper, not the card. The wrapper must clip (the
+   card slides out of it), and a clipped child's 1px border gets shaved along
+   every edge on fractional device-pixel ratios — which is why the borders
+   looked thin and uneven on desktop. A border on the clipping element itself
+   is never clipped. The card inside is square; the wrapper does the rounding. */
+.card-wrap {
+  position: relative; overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid rgba(244,240,232,0.1);
+  transition: border-color 0.15s ease;
+}
+.card-wrap.is-checked { border-color: rgba(138,99,210,0.4); }
+.card-wrap.is-complete { border-color: rgba(212,175,55,0.5); box-shadow: 0 6px 22px rgba(212,175,55,0.06); }
+.card-wrap.is-exception { border-color: rgba(201,106,94,0.6); }
+.card-wrap.is-archived { opacity: 0.55; }
+.card-wrap.is-complete .pc-name { color: var(--gold-light); }
 .card-actions {
   position: absolute; inset: 0 0 0 auto; width: 168px; display: flex;
   /* hidden unless actually swiping: the card is opaque, but any transition on
@@ -148,28 +161,21 @@ body {
 .swipe-btn:active { filter: brightness(1.15); }
 
 .proj-card {
-  position: relative; border-radius: 20px; padding: 16px 16px 14px;
+  position: relative; padding: 16px 16px 14px;
   background: linear-gradient(150deg, #241634, #16101F);
-  border: 1px solid rgba(244,240,232,0.1);
   display: flex; flex-direction: column; gap: 12px;
   cursor: pointer;
   touch-action: pan-y; user-select: none; -webkit-user-select: none;
-  background-clip: padding-box;
   /* overshoot on the way out and back — the "bouncy" bit */
-  transition: transform 0.34s cubic-bezier(0.34, 1.42, 0.5, 1), border-color 0.15s ease;
+  transition: transform 0.34s cubic-bezier(0.34, 1.42, 0.5, 1);
   /* deliberately no entry animation: the list is rebuilt on every keystroke
      while editing, and a fade-in would strobe the action tray behind it */
 }
 .card-wrap.open .proj-card { box-shadow: -12px 0 26px rgba(0,0,0,0.45); }
-.proj-card.is-archived { opacity: 0.55; }
-.proj-card.is-checked { border-color: rgba(138,99,210,0.4); }
-.proj-card.is-complete { border-color: rgba(212,175,55,0.5); box-shadow: 0 6px 22px rgba(212,175,55,0.06); }
-.proj-card.is-exception { border-color: rgba(201,106,94,0.6); }
 
 .pc-head { display: flex; align-items: flex-start; gap: 10px; }
 .pc-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .pc-name { font-family: Marcellus, Georgia, serif; font-size: 20px; line-height: 1.25; color: var(--cream); word-break: break-word; }
-.proj-card.is-complete .pc-name { color: var(--gold-light); }
 .pc-meta { font-family: ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.1em; color: rgba(244,240,232,0.38); }
 
 .exc-ico { width: 22px; height: 22px; flex-shrink: 0; color: var(--red-light); margin-top: 2px; }
@@ -394,6 +400,11 @@ textarea.inp.tall { min-height: 150px; }
 .menu-sheet .m-title { font-family: Marcellus, Georgia, serif; font-size: 19px; color: var(--cream); }
 .menu-sheet .m-body { font-size: 13px; line-height: 1.6; color: rgba(244,240,232,0.6); }
 .menu-sheet.items { padding: 0; overflow: hidden; gap: 0; }
+/* right-click: anchored to the pointer instead of the bottom of the screen */
+.menu-sheet.at-cursor {
+  left: 0; right: auto; bottom: auto; top: 0; margin: 0;
+  width: 244px; max-width: 90vw;
+}
 .menu-sheet.items .m-title { padding: 15px 18px; border-bottom: 1px solid rgba(244,240,232,0.08); }
 .menu-sheet .m-item {
   padding: 15px 18px; font-size: 15px; font-weight: 600; cursor: pointer; text-align: left;
@@ -479,6 +490,23 @@ body.dragging .proj-card { cursor: grabbing; }
 }
 .pin-x:hover { color: var(--red-light); background: rgba(201,106,94,0.15); }
 
+/* ============ pull to sync ============ */
+.pull-ind {
+  position: fixed; top: 6px; left: 50%; z-index: 120; pointer-events: none;
+  transform: translateX(-50%); opacity: 0;
+  transition: opacity 0.18s ease, transform 0.24s cubic-bezier(0.34, 1.42, 0.5, 1);
+  padding: 7px 16px; border-radius: 999px;
+  background: rgba(23,17,31,0.95); border: 1px solid rgba(212,175,55,0.35);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  font-family: ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.16em;
+  color: rgba(244,240,232,0.6); white-space: nowrap;
+}
+.pull-ind.ready { border-color: var(--gold); color: var(--gold-light); }
+
+/* the stance button sits next to the done star and cycles – ! … */
+.star.stance { font-size: 15px; }
+.seg.inline { align-self: flex-start; }
+
 /* room for a floating Done button at the foot of a scrolling modal */
 .modal-pad { height: 74px; flex-shrink: 0; }
 .modal-full { position: relative; }
@@ -560,7 +588,7 @@ body.dragging .proj-card { cursor: grabbing; }
     max-width: 760px; width: 100%; margin: 0 auto;
   }
 
-  .proj-card.is-selected {
+  .card-wrap.is-selected {
     border-color: var(--gold) !important;
     background: linear-gradient(150deg, #33204D, #1B1226);
   }
@@ -586,8 +614,8 @@ body.dragging .proj-card { cursor: grabbing; }
 
 /* desktop hover niceties */
 @media (hover: hover) {
-  .proj-card:hover { border-color: rgba(212,175,55,0.45); }
-  .proj-card.is-exception:hover { border-color: var(--red); }
+  .card-wrap:hover { border-color: rgba(212,175,55,0.45); }
+  .card-wrap.is-exception:hover { border-color: var(--red); }
   .add-card:hover { background: rgba(212,175,55,0.08); }
   .icon-btn:hover, .search-pill:hover, .sync-chip:hover { border-color: var(--gold); }
   .tgl:hover { border-color: rgba(212,175,55,0.45); }
