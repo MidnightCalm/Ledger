@@ -54,6 +54,11 @@ body {
 /* ============ home header ============ */
 .wordmark-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 2px; }
 .wordmark { font-family: Marcellus, Georgia, serif; font-size: 46px; line-height: 1; color: var(--cream); }
+.wordmark .ver {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px; letter-spacing: 0.1em; font-weight: 400;
+  color: rgba(244,240,232,0.26); vertical-align: super; margin-left: 7px;
+}
 .gold-rule { width: 48px; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); }
 .stats { font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.22em; color: rgba(212,175,55,0.85); text-align: center; }
 

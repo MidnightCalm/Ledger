@@ -1,7 +1,14 @@
-/* Ledger service worker — cache-first app shell.
-   Deliberately never touches api.github.com: sync must always hit the network,
-   and a cached/offline fallback there would silently hand back stale data. */
-const CACHE = 'ledger-v3';
+/* Ledger service worker.
+
+   Same-origin app files are network-first: a deployed update must never be held
+   hostage by a stale cache, which is exactly what cache-first did. The cache is
+   still written on every successful fetch, so it remains a complete offline
+   copy — it is just the fallback rather than the first choice.
+
+   Fonts stay cache-first (they are immutable and versioned by URL).
+   api.github.com is deliberately untouched: sync must always hit the network,
+   and an offline fallback there would silently hand back stale data. */
+const CACHE = 'ledger-1.3.0';
 const ASSETS = [
   './',
   'index.html',
@@ -28,21 +35,33 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
-
   const sameOrigin = url.origin === location.origin;
   const isFont = url.hostname.endsWith('gstatic.com') || url.hostname.endsWith('googleapis.com');
+
   if (!sameOrigin && !isFont) return; // GitHub API and everything else: straight to the network
 
-  e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then(hit => {
-      if (hit) return hit;
-      return fetch(e.request).then(res => {
-        if (res.ok || res.type === 'opaque') {
+  if (sameOrigin) {
+    e.respondWith(
+      fetch(e.request).then(res => {
+        if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(e.request, copy));
         }
         return res;
-      }).catch(() => (sameOrigin ? caches.match('index.html') : Response.error()));
-    })
+      }).catch(() =>
+        caches.match(e.request, { ignoreSearch: true }).then(hit => hit || caches.match('index.html'))
+      )
+    );
+    return;
+  }
+
+  e.respondWith(
+    caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request).then(res => {
+      if (res.ok || res.type === 'opaque') {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copy));
+      }
+      return res;
+    }))
   );
 });

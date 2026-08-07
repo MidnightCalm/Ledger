@@ -115,5 +115,29 @@ py -m http.server 8777 --directory ledger-app
 Then open `http://localhost:8777`. A `.claude/launch.json` entry named `ledger` does the
 same thing.
 
-Bump `CACHE` in `sw.js` when you change any shell file, otherwise the service worker
-keeps serving the old copy.
+## Versions and updating
+
+The running build is shown as a faded `v1.3.0` beside the wordmark, and again at the foot
+of the sync pane. That is the only reliable way to tell what a given device is actually
+running — a PWA gives no other signal.
+
+On every release, bump **both**:
+
+- `APP_VERSION` in `app.js`
+- `CACHE` in `sw.js`
+
+They are separate files and cannot share a constant, so they drift silently if you forget.
+
+Same-origin files are served **network-first** (see `sw.js`). Earlier versions were
+cache-first, which meant a deployed update could never reach an installed app on its own —
+the cache always answered before the network was consulted. The cache is still written on
+every successful fetch, so it remains a full offline copy; it is now the fallback rather
+than the first choice.
+
+The app also asks the worker to check for a new build on launch and whenever it returns to
+the foreground, and reloads itself once when a new worker takes control. Updates therefore
+land by themselves, usually within one relaunch.
+
+**Devices still running a pre-1.3.0 build need one manual nudge**, because the old
+cache-first worker is what is deciding: force-quit and reopen the app twice. Check the
+version badge to confirm.

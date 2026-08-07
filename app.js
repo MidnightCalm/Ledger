@@ -4,6 +4,9 @@
 'use strict';
 
 /* ================= constants ================= */
+/* Bump APP_VERSION and CACHE in sw.js together on every release — the version
+   shown beside the wordmark is how you tell which build a device is running. */
+const APP_VERSION = '1.3.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 const GIST_FILE = 'ledger.json';
@@ -346,7 +349,7 @@ const FILTERS = [['all', 'All'], ['open', 'Open'], ['unchecked', 'Unchecked'], [
 
 function brandHTML() {
   return '<div class="wordmark-wrap">' +
-    '<div class="wordmark">Ledger</div>' +
+    '<div class="wordmark">Ledger<span class="ver">v' + esc(APP_VERSION) + '</span></div>' +
     '<div class="gold-rule"></div>' +
     '<div class="stats" id="stats">' + esc(statsText()) + '</div>' +
   '</div>';
@@ -469,7 +472,7 @@ function settingsHTML() {
       '</div></div>' +
 
     (l ? '<div class="btn-row"><button class="btn danger" data-act="unlink">Unlink this device</button></div>' : '') +
-    '<div class="stamp">Objectives stay on this device even when unlinked.</div>' +
+    '<div class="stamp">Objectives stay on this device even when unlinked.<br>LEDGER v' + esc(APP_VERSION) + '</div>' +
   '</div>';
 }
 
@@ -698,8 +701,26 @@ document.addEventListener('visibilitychange', () => {
   else { clearTimeout(pushTimer); if (linked()) doSync(); }
 });
 
+/* Update path. The worker is asked to check for a new build on every launch and
+   every time the app returns to the foreground; when a new one takes over, the
+   page reloads itself once so the running code matches the installed build.
+   Without this an installed PWA can sit on a stale bundle indefinitely. */
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ }));
+  const hadController = !!navigator.serviceWorker.controller;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || refreshing) return;   // first install has nothing stale to replace
+    refreshing = true;
+    location.reload();
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      reg.update();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update();
+      });
+    }).catch(() => { /* offline support is optional */ });
+  });
 }
 
 render(true);
