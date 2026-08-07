@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -892,6 +892,9 @@ function narrowHTML() {
   return '<div class="screen home">' +
       brandHTML() + syncChipHTML() +
       '<div id="list-host">' + listHTML() + '</div>' +
+      // a real element, not container padding: Chrome drops the bottom padding
+      // of a scrollable flex column, which left the last card under the toolbar
+      '<div class="foot-spacer"></div>' +
     '</div>' +
     '<div class="bottom-stack">' +
       folderChipsHTML() + filtersHTML() +
@@ -1141,7 +1144,25 @@ function render(force) {
     if (el) el.focus();
   }
   renderPip();
+  syncBottomPad();
   document.dispatchEvent(new Event('ledger:rendered'));
+}
+
+/* Measure the bottom cluster so the list can scroll clear of it. A fixed guess
+   left the last card underneath once the chip rows wrapped onto a second line. */
+let padRO = null;
+function syncBottomPad() {
+  const app = $('#app');
+  if (!app) return;
+  const bar = document.querySelector('.bottom-stack');
+  app.style.setProperty('--bottom-pad', bar ? bar.offsetHeight + 'px' : '0px');
+  if (bar && window.ResizeObserver) {
+    if (padRO) padRO.disconnect();
+    padRO = new ResizeObserver(() => {
+      if (bar.isConnected) app.style.setProperty('--bottom-pad', bar.offsetHeight + 'px');
+    });
+    padRO.observe(bar);
+  }
 }
 
 /* Cheap partial updates so typing in search never rebuilds the screen. */

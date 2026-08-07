@@ -49,15 +49,25 @@ body {
 }
 /* In a flex column every child shrinks by default once the content overflows,
    which on iOS crushed the wordmark and the chip rows into a smear as soon as
-   a few cards existed. Only the list may flex. */
-.screen > * { flex: 0 0 auto; }
-.screen > #list-host { flex: 1 1 auto; min-height: 0; }
+   a few cards existed. Nothing shrinks: every child takes its natural height
+   and the screen itself scrolls.
 
+   The list must NOT be flexible either. `flex: 1 1 auto; min-height: 0` let it
+   shrink below its own content, so the card stack overflowed out of the box —
+   painting over the toolbar and leaving it out of the scroll height. */
+.screen > * { flex: 0 0 auto; }
+
+/* The foot padding has to clear the bottom cluster, whose height changes as the
+   folder and filter rows wrap. It is measured at runtime into --bottom-pad;
+   the literal is only the pre-measurement fallback. */
 .screen.home {
-  padding: calc(var(--safe-top) + 30px) 20px calc(var(--safe-bottom) + 210px);
+  padding: calc(var(--safe-top) + 30px) 20px 0;
   gap: 20px;
   background: radial-gradient(120% 60% at 50% 0%, #241635 0%, rgba(12,10,16,0) 60%);
 }
+/* clears the bottom cluster; its height is measured into --bottom-pad at
+   runtime because the folder and filter rows wrap at different widths */
+.foot-spacer { height: calc(var(--bottom-pad, 200px) + 22px); flex: 0 0 auto; }
 /* extra room at the foot so the Done button never covers the delete action */
 .screen.detail { gap: 16px; padding-bottom: calc(var(--safe-bottom) + 104px); }
 
