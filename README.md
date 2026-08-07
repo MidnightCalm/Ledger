@@ -37,6 +37,41 @@ On phones the detail view carries a **Done** button in the bottom-right corner, 
 thumb reach. Everything autosaves as you type, so it is navigation rather than a save
 gate — the back arrow in the top corner still works and does the same thing.
 
+## Folders and templates
+
+Every objective lives in a folder, and **each folder defines its own toggles**. Solar work
+keeps `Checked` / `Complete`; an Emails folder can carry `Awaiting reply` / `Needs my
+reply` / `Resolved`. Edit them with the ⚙ chip (or the rail row on desktop): rename a
+toggle, cycle its colour, add or remove one, and mark which is the folder's **done** state
+with ★ — that is what the Open filter hides and what the stats line counts.
+
+Renaming a toggle keeps its stored key, so existing objectives keep their state. Removing
+one leaves the stored flag untouched, so re-adding the toggle brings the state back.
+
+Deleting a folder moves its objectives to the first remaining folder rather than destroying
+them; they keep their text but lose that folder's toggle states. The last folder cannot be
+deleted.
+
+## Tags
+
+Tags cut across folders. Put `concord` on a solar project and on the email thread about it,
+then tap the tag on any card to pull both up — the tap switches to All folders and searches
+`#concord`. Typing `#something` in the search box searches tags only; a bare word searches
+name, owner, notes, exception **and** tags.
+
+Tags are lower-cased and de-duplicated on entry, so the same tag typed two ways on two
+devices still matches.
+
+## Swipe actions
+
+Drag a card left to reveal **Archive** and **Delete**. The card tracks your finger and
+snaps with an overshoot curve. Vertical intent wins early, so the list still scrolls
+normally, and a drag never registers as a tap.
+
+Archived objectives drop out of every view except the **Archived** filter, where the same
+swipe offers **Restore**. Archiving is not deleting — nothing is removed and it syncs like
+any other change.
+
 ## Filters
 
 The default view is **Open**, so completed objectives drop out of the list once ticked.
@@ -51,12 +86,23 @@ preference, not data).
 ## How the data works
 
 `localStorage` is always the working copy — the app is fully usable with no network and
-no GitHub account at all. When linked, a secret Gist holds one `ledger.json` file that
+no GitHub account at all. When linked, a secret Gist holds one `ledger-v2.json` file that
 every device merges into.
 
-Merging is **per objective, newest write wins** — not whole-file last-write-wins. Editing
-a different objective on each device merges cleanly rather than one device clobbering
-the other. Deletes propagate as tombstones, which are purged after 30 days.
+Merging is **per record, newest write wins** — not whole-file last-write-wins. Folders and
+objectives merge independently, so editing a different one on each device merges cleanly
+rather than one device clobbering the other. Deletes propagate as tombstones, purged after
+30 days.
+
+### Why `ledger-v2.json` and not `ledger.json`
+
+Schema v1 had no folders. A v1 client reading v2 data would strip every field it did not
+recognise — `folderId`, `flags`, `tags` — and push the stripped result back, destroying
+folders for every device. Giving v2 its own filename makes that impossible. The original
+`ledger.json` is left in place, untouched, as a frozen pre-folders backup.
+
+On first run against a Gist that still only holds `ledger.json`, v2 imports and migrates it
+once, then writes to the new file from then on.
 
 Sync runs on launch, ~1.8s after any edit, whenever the app returns to the foreground,
 and once a minute while it is open.

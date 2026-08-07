@@ -100,18 +100,42 @@ body {
 }
 .seg > button.active { background: var(--gold); color: var(--ink); }
 
+/* ============ folder chips ============ */
+.seg.folders > button.add {
+  padding: 7px 12px; color: var(--gold); font-size: 15px; line-height: 1;
+}
+.seg.folders > button.active { background: var(--purple); color: var(--cream); }
+
 /* ============ project cards ============ */
 .card-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* the tray sits underneath; the card slides left to uncover it */
+.card-wrap { position: relative; border-radius: 20px; overflow: hidden; }
+.card-actions {
+  position: absolute; inset: 0 0 0 auto; width: 168px; display: flex;
+}
+.swipe-btn {
+  flex: 1; border: none; cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+  display: flex; align-items: center; justify-content: center;
+}
+.swipe-btn.arch { background: rgba(138,99,210,0.9); color: var(--cream); }
+.swipe-btn.del { background: var(--red); color: #2A0F0B; }
+.swipe-btn:active { filter: brightness(1.15); }
 
 .proj-card {
   position: relative; border-radius: 20px; padding: 16px 16px 14px;
   background: linear-gradient(150deg, #241634, #16101F);
   border: 1px solid rgba(244,240,232,0.1);
   display: flex; flex-direction: column; gap: 12px;
-  cursor: pointer; transition: border-color 0.15s ease, transform 0.12s ease;
+  cursor: pointer;
+  touch-action: pan-y; user-select: none; -webkit-user-select: none;
+  /* overshoot on the way out and back — the "bouncy" bit */
+  transition: transform 0.34s cubic-bezier(0.34, 1.42, 0.5, 1), border-color 0.15s ease;
   animation: ledgerRise 0.22s ease-out;
 }
-.proj-card:active { transform: scale(0.995); }
+.card-wrap.open .proj-card { box-shadow: -12px 0 26px rgba(0,0,0,0.45); }
+.proj-card.is-archived { opacity: 0.55; }
 .proj-card.is-checked { border-color: rgba(138,99,210,0.4); }
 .proj-card.is-complete { border-color: rgba(212,175,55,0.5); box-shadow: 0 6px 22px rgba(212,175,55,0.06); }
 .proj-card.is-exception { border-color: rgba(201,106,94,0.6); }
@@ -127,6 +151,47 @@ body {
 .exc-ico .mk { fill: currentColor; stroke: none; }
 
 .pc-tgls { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ============ tags ============ */
+.pc-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  letter-spacing: 0.04em; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+  background: rgba(138,99,210,0.14); border: 1px solid rgba(138,99,210,0.3);
+  color: var(--purple-light);
+}
+.tag:active { background: rgba(138,99,210,0.3); }
+.tag.more { background: none; border-color: transparent; color: rgba(244,240,232,0.35); cursor: default; }
+
+/* ============ toggle tones ============ */
+.tgl.on.t-gold { color: var(--gold-light); border-color: rgba(212,175,55,0.55); background: rgba(212,175,55,0.13); }
+.tgl.on.t-gold .dot { background: var(--gold); border-color: var(--gold); }
+.tgl.on.t-purple { color: var(--purple-light); border-color: rgba(138,99,210,0.55); background: rgba(138,99,210,0.15); }
+.tgl.on.t-purple .dot { background: var(--purple); border-color: var(--purple); }
+.tgl.on.t-red { color: var(--red-light); border-color: rgba(201,106,94,0.55); background: rgba(201,106,94,0.14); }
+.tgl.on.t-red .dot { background: var(--red); border-color: var(--red); }
+.tgl.on.t-cream { color: var(--cream); border-color: rgba(244,240,232,0.5); background: rgba(244,240,232,0.12); }
+.tgl.on.t-cream .dot { background: var(--cream); border-color: var(--cream); }
+
+/* ============ folder editor ============ */
+.tgl-editor { display: flex; flex-direction: column; gap: 10px; }
+.tgl-row { display: flex; align-items: center; gap: 8px; }
+.tgl-row .inp { flex: 1; min-width: 0; padding: 10px 12px; font-size: 15px; }
+.tone-swatch {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; cursor: pointer;
+  border: 2px solid rgba(244,240,232,0.25); padding: 0;
+}
+.tone-swatch.tone-gold { background: var(--gold); }
+.tone-swatch.tone-purple { background: var(--purple); }
+.tone-swatch.tone-red { background: var(--red); }
+.tone-swatch.tone-cream { background: var(--cream); }
+.star {
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 999px; cursor: pointer;
+  background: none; border: 1px solid rgba(244,240,232,0.2);
+  color: rgba(244,240,232,0.3); font-size: 15px; padding: 0;
+}
+.star.on { color: var(--gold); border-color: var(--gold); background: rgba(212,175,55,0.12); }
+.btn-row.wrap { flex-wrap: wrap; }
 
 /* ============ toggles ============ */
 .tgl {
@@ -296,8 +361,29 @@ textarea.inp.tall { min-height: 150px; }
 .fab.sm { width: 46px; height: 46px; font-size: 25px; box-shadow: none; }
 
 @media (min-width: 900px) {
-  #app { max-width: 1200px; }
+  #app { max-width: 1400px; }
   .split { display: grid; grid-template-columns: minmax(340px, 400px) 1fr; height: 100%; overflow: hidden; }
+  .split.with-rail { grid-template-columns: 210px minmax(320px, 380px) 1fr; }
+
+  .pane-rail {
+    border-right: 1px solid rgba(244,240,232,0.08);
+    gap: 4px; padding-top: calc(var(--safe-top) + 34px);
+  }
+  .rail-label {
+    font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em;
+    color: rgba(212,175,55,0.7); padding: 0 12px 8px;
+  }
+  .rail-row {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 11px 12px; border-radius: 12px; cursor: pointer;
+    background: none; border: 1px solid transparent; font-family: inherit;
+    color: rgba(244,240,232,0.62); font-size: 14px; text-align: left;
+  }
+  .rail-row .rname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rail-row .rcount { font-family: ui-monospace, monospace; font-size: 11px; color: rgba(244,240,232,0.35); }
+  .rail-row.active { background: rgba(138,99,210,0.18); border-color: rgba(138,99,210,0.4); color: var(--cream); }
+  .rail-row.ghost { color: rgba(212,175,55,0.75); font-size: 13px; }
+  .rail-row:hover { border-color: rgba(212,175,55,0.35); }
   .pane {
     overflow-y: auto; display: flex; flex-direction: column; gap: 18px;
     padding: calc(var(--safe-top) + 28px) 24px 32px;
