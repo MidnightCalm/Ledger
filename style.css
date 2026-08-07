@@ -48,7 +48,8 @@ body {
   gap: 20px;
   background: radial-gradient(120% 60% at 50% 0%, #241635 0%, rgba(12,10,16,0) 60%);
 }
-.screen.detail { gap: 16px; padding-bottom: calc(var(--safe-bottom) + 40px); }
+/* extra room at the foot so the Done button never covers the delete action */
+.screen.detail { gap: 16px; padding-bottom: calc(var(--safe-bottom) + 104px); }
 
 /* ============ home header ============ */
 .wordmark-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 2px; }
@@ -271,6 +272,19 @@ textarea.inp.tall { min-height: 150px; }
   max-width: 90%; overflow: hidden; text-overflow: ellipsis;
 }
 .toast.bad { background: var(--red); color: var(--cream); }
+
+/* ============ done button (phone detail view) ============ */
+.done-fab {
+  position: absolute; right: 18px; bottom: calc(var(--safe-bottom) + 20px); z-index: 30;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 15px 24px; border-radius: 999px; border: none;
+  background: var(--gold); color: var(--ink);
+  font-family: inherit; font-size: 15px; font-weight: 700;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55); cursor: pointer;
+  animation: ledgerRise 0.2s ease-out;
+}
+.done-fab:active { background: var(--gold-light); }
+.done-fab .chk { font-size: 16px; line-height: 1; }
 
 /* ============ desktop: two-pane ============ */
 .search-row { display: flex; gap: 10px; align-items: center; }

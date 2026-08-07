@@ -33,6 +33,21 @@ The breakpoint is 900px.
 Crossing the breakpoint re-renders. Both `matchMedia` and `resize` are wired to a single
 guard that only fires when the layout actually changes.
 
+On phones the detail view carries a **Done** button in the bottom-right corner, within
+thumb reach. Everything autosaves as you type, so it is navigation rather than a save
+gate — the back arrow in the top corner still works and does the same thing.
+
+## Filters
+
+The default view is **Open**, so completed objectives drop out of the list once ticked.
+They are not deleted: the **Complete** and **All** chips bring them back, and the stats
+line under the wordmark always counts every objective. Completing something from the list
+shows a brief toast, since a card silently vanishing under your thumb otherwise reads as
+a glitch.
+
+The chosen filter is remembered per device (in `localStorage`, not synced — it is a view
+preference, not data).
+
 ## How the data works
 
 `localStorage` is always the working copy — the app is fully usable with no network and

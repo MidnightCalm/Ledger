@@ -13,6 +13,8 @@ const PUSH_DEBOUNCE = 1800;
 const POLL_MS = 60000;
 const TOMBSTONE_MS = 30 * 24 * 60 * 60 * 1000;
 const FIELDS = ['id', 'name', 'owner', 'notes', 'exception', 'complete', 'checked', 'deleted', 'createdAt', 'updatedAt'];
+const FILTER_KEYS = ['all', 'open', 'unchecked', 'exceptions', 'complete'];
+const DEFAULT_FILTER = 'open';   // completed work stays out of the way until asked for
 
 /* ================= helpers ================= */
 const $ = sel => document.querySelector(sel);
@@ -71,10 +73,16 @@ function loadCfg() {
     const raw = localStorage.getItem(CFGKEY);
     if (raw) {
       const c = JSON.parse(raw);
-      if (c && typeof c === 'object') return { token: c.token || '', gistId: c.gistId || '', lastSyncAt: c.lastSyncAt || 0 };
+      if (c && typeof c === 'object') return {
+        token: c.token || '',
+        gistId: c.gistId || '',
+        lastSyncAt: c.lastSyncAt || 0,
+        // guarded: a stale or hand-edited value must not hide every objective
+        filter: FILTER_KEYS.includes(c.filter) ? c.filter : DEFAULT_FILTER
+      };
     }
   } catch (e) { /* ignore */ }
-  return { token: '', gistId: '', lastSyncAt: 0 };
+  return { token: '', gistId: '', lastSyncAt: 0, filter: DEFAULT_FILTER };
 }
 function saveCfg() { try { localStorage.setItem(CFGKEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } }
 
@@ -93,7 +101,7 @@ let db = loadDb();
 let cfg = loadCfg();
 let view = { screen: 'home', id: null };
 let ui = {
-  q: '', filter: 'all', modal: null, confirm: null,
+  q: '', filter: cfg.filter, modal: null, confirm: null,
   toastMsg: '', toastBad: false, toastTimer: null,
   needsRender: false, focusName: false,
   syncState: 'idle', syncMsg: '', busy: false
@@ -354,9 +362,15 @@ function fabHTML(small) {
   return '<button class="fab' + (small ? ' sm' : '') + '" data-act="new" aria-label="Add objective">+</button>';
 }
 
+/* Everything autosaves as you type, so this is navigation rather than a save
+   gate — but it sits under the thumb, which the top-corner back arrow does not. */
+function doneFabHTML() {
+  return '<button class="done-fab" data-act="home"><span class="chk">✓</span>Done</button>';
+}
+
 /* Phone: one screen at a time, list pushed aside by the detail view. */
 function narrowHTML() {
-  if (view.screen === 'detail' && byId(view.id)) return detailHTML(false);
+  if (view.screen === 'detail' && byId(view.id)) return detailHTML(false) + doneFabHTML();
   return '<div class="screen home">' +
       brandHTML() + syncChipHTML() + filtersHTML() +
       '<div id="list-host">' + listHTML() + '</div>' +
@@ -520,7 +534,7 @@ document.addEventListener('click', e => {
   if (act === 'open') { view = { screen: 'detail', id: el.dataset.id }; render(true); return; }
   if (act === 'home') { view = { screen: 'home', id: null }; render(true); return; }
   if (act === 'new') { createProject(); return; }
-  if (act === 'filter') { ui.filter = el.dataset.f; render(true); return; }
+  if (act === 'filter') { ui.filter = el.dataset.f; cfg.filter = ui.filter; saveCfg(); render(true); return; }
   if (act === 'settings') { ui.modal = 'settings'; render(true); return; }
   if (act === 'close-modal') { readSettingsFields(); ui.modal = null; render(true); return; }
   if (act === 'ask-delete') { ui.confirm = el.dataset.id; render(true); return; }
@@ -536,7 +550,10 @@ document.addEventListener('click', e => {
     // Marking complete implies it has been checked; that is the usual order of events.
     if (k === 'complete' && p.complete) p.checked = true;
     touch(p);
+    // A card vanishing under your thumb reads as a glitch unless it is explained.
+    const gone = !filtered().some(x => x.id === p.id);
     render(true);
+    if (gone) toast(k === 'complete' && p.complete ? 'Completed — hidden from this view' : 'Hidden from this view');
     return;
   }
 
