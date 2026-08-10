@@ -16,10 +16,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<!-- ?v= must match APP_VERSION in app.js and CACHE in sw.js — bump all three together.
+     The service worker bypasses the HTTP cache itself, but the very first load of a
+     new device has no worker yet, and the host serves these with max-age=600. The
+     version query is what stops that first load being served a stale bundle. -->
+<link rel="stylesheet" href="style.css?v=2.4.2">
 </head>
 <body>
 <div id="app"></div>
-<script src="app.js"></script>
+<script src="app.js?v=2.4.2"></script>
 </body>
 </html>

@@ -5,10 +5,17 @@
    still written on every successful fetch, so it remains a complete offline
    copy — it is just the fallback rather than the first choice.
 
+   IMPORTANT: those network fetches must opt out of the browser's HTTP cache.
+   A plain fetch(request) uses the default cache mode, so the HTTP cache answers
+   it — and GitHub Pages serves this app with Cache-Control: max-age=600. That
+   made "network-first" a lie for ten minutes after every deploy: the worker
+   asked for the network and the HTTP cache handed back the old file. Every
+   network read here therefore sets an explicit cache mode.
+
    Fonts stay cache-first (they are immutable and versioned by URL).
    api.github.com is deliberately untouched: sync must always hit the network,
    and an offline fallback there would silently hand back stale data. */
-const CACHE = 'ledger-2.4.1';
+const CACHE = 'ledger-2.4.2';
 const ASSETS = [
   './',
   'index.html',
@@ -20,8 +27,27 @@ const ASSETS = [
   'icons/icon-512.png'
 ];
 
+/* Bypass the HTTP cache for a network read. Falls back to the original request
+   if a browser refuses to rebuild it (navigation requests are the awkward case). */
+function fresh(request, mode) {
+  try {
+    return new Request(request, { cache: mode || 'no-store' });
+  } catch (err) {
+    return request;
+  }
+}
+
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      // not cache.addAll: its fetches would go through the HTTP cache too, so a
+      // fresh install could precache the very files it is meant to replace
+      .then(c => Promise.all(ASSETS.map(u =>
+        fetch(fresh(new Request(u, { credentials: 'same-origin' }), 'reload'))
+          .then(res => { if (res.ok) return c.put(u, res); })
+      )))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', e => {
@@ -42,7 +68,7 @@ self.addEventListener('fetch', e => {
 
   if (sameOrigin) {
     e.respondWith(
-      fetch(e.request).then(res => {
+      fetch(fresh(e.request)).then(res => {
         if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(e.request, copy));
