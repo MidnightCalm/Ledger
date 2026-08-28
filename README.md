@@ -1,6 +1,6 @@
 # Ledger
 
-An objective tracker in the same luxe-dark register as Trove. Every objective is a card
+An objective tracker in the Luxe Dark design language (tokens in Solar Calculations/luxe-dark-theme.css: purple is what you touch, gold is what you read, ghost-paint edges on raised surfaces). Every objective is a card
 with two toggles — **Checked** and **Complete** — and an exception marker that raises
 itself whenever the objective's Exception field has anything in it.
 

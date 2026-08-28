@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '2.4.2';
+const APP_VERSION = '3.0.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -40,9 +40,9 @@ const FILTER_KEYS = ['all', 'open', 'action', 'waiting', 'exceptions', 'done', '
    exactly one stance and can never appear in both lists.
    With nothing ticked yet, the folder's initialStance applies. */
 const STANCES = [
-  { id: 'none', glyph: '–', label: 'No bearing on Actionable / Pending', tone: '#7A7480' },
-  { id: 'action', glyph: '!', label: 'Ticking this makes it Actionable — your move', tone: '#C96A5E' },
-  { id: 'pending', glyph: '…', label: 'Ticking this makes it Pending — waiting on someone', tone: '#8A63D2' }
+  { id: 'none', glyph: '–', label: 'No bearing on Actionable / Pending', tone: '#857F96' },
+  { id: 'action', glyph: '!', label: 'Ticking this makes it Actionable — your move', tone: '#E06C7A' },
+  { id: 'pending', glyph: '…', label: 'Ticking this makes it Pending — waiting on someone', tone: '#9D8CFF' }
 ];
 /* never returns -1: an unknown stance reads as 'none' rather than crashing the
    editor on STANCES[-1] */
@@ -57,9 +57,17 @@ const DEFAULT_FILTER = 'open';   // finished work stays out of the way until ask
 
 /* Toggle colours are stored as hex so any colour is expressible. The named
    tones of v2.0 migrate to their hex equivalents on read. */
-const TONE_HEX = { gold: '#D4AF37', purple: '#8A63D2', red: '#C96A5E', cream: '#F4F0E8' };
-const PALETTE = ['#D4AF37', '#E8C96A', '#8A63D2', '#B79CE8', '#C96A5E', '#5EA8C9', '#6FC98B', '#F4F0E8'];
-const DEFAULT_TONE = '#D4AF37';
+const TONE_HEX = { gold: '#E4B54A', purple: '#9D8CFF', red: '#E06C7A', cream: '#EDEAF4' };
+/* v2 stored the Trove palette; map those exact defaults to their Luxe
+   equivalents on read so old folders join the redesign. A colour the user
+   picked that was never a default (e.g. #5EA8C9) passes through untouched. */
+const LEGACY_HEX = {
+  '#D4AF37': '#E4B54A', '#E8C96A': '#D9A93F',
+  '#8A63D2': '#9D8CFF', '#B79CE8': '#7B61FF',
+  '#C96A5E': '#E06C7A', '#F4F0E8': '#EDEAF4'
+};
+const PALETTE = ['#E4B54A', '#D9A93F', '#9D8CFF', '#7B61FF', '#E06C7A', '#5EA8C9', '#6FC98B', '#EDEAF4'];
+const DEFAULT_TONE = '#E4B54A';
 
 /* ================= helpers ================= */
 const $ = sel => document.querySelector(sel);
@@ -94,7 +102,8 @@ function hexToRgba(hex, a) {
 
 function normalizeToggle(t, i) {
   const label = typeof t.label === 'string' && t.label.trim() ? t.label : 'Toggle ' + (i + 1);
-  const tone = isHex(t.tone) ? t.tone.toUpperCase() : (TONE_HEX[t.tone] || DEFAULT_TONE);
+  let tone = isHex(t.tone) ? t.tone.toUpperCase() : (TONE_HEX[t.tone] || DEFAULT_TONE);
+  tone = LEGACY_HEX[tone] || tone;
   const stance = STANCES.some(s => s.id === t.stance) ? t.stance : 'none';
   return { key: t.key || uid('t'), label, tone, stance };
 }
@@ -717,8 +726,8 @@ function listHTML() {
     const noStance = st => f && f.initialStance !== st && !f.toggles.some(t => t.stance === st);
     if (!anyHere) msg = 'Nothing here yet.<br>Tap + to add an objective.';
     // a stance filter that nothing in this folder can ever reach is a setup gap
-    else if (ui.filter === 'action' && noStance('action')) msg = 'Nothing in “' + esc(f.name) + '” can be <b style="color:#C96A5E">Actionable</b> yet.<br>Give a step the <b>!</b> stance, or set the folder to start as Actionable.';
-    else if (ui.filter === 'waiting' && noStance('pending')) msg = 'Nothing in “' + esc(f.name) + '” can be <b style="color:#8A63D2">Pending</b> yet.<br>Give a step the <b>…</b> stance in the folder editor.';
+    else if (ui.filter === 'action' && noStance('action')) msg = 'Nothing in “' + esc(f.name) + '” can be <b style="color:#E06C7A">Actionable</b> yet.<br>Give a step the <b>!</b> stance, or set the folder to start as Actionable.';
+    else if (ui.filter === 'waiting' && noStance('pending')) msg = 'Nothing in “' + esc(f.name) + '” can be <b style="color:#9D8CFF">Pending</b> yet.<br>Give a step the <b>…</b> stance in the folder editor.';
     else msg = 'Nothing matches this view.';
     return '<div class="empty-note">' + msg + '</div>';
   }
@@ -1003,11 +1012,11 @@ function folderEditorHTML() {
       hintHTML('steps',
       '★ marks the folder’s <b>done</b> state: hidden by the Open filter and tallied above. Every folder has exactly one.<br><br>' +
       'The second button cycles what ticking that step <i>means</i>:<br>' +
-      '<b style="color:#C96A5E">!</b> → it becomes <b>Actionable</b> (your move) · ' +
-      '<b style="color:#8A63D2">…</b> → it becomes <b>Pending</b> (someone else’s) · ' +
-      '<b style="color:#7A7480">–</b> → no bearing.<br><br>' +
-      'The <b>furthest-along ticked step wins</b>, so Drafted <b style="color:#8A63D2">…</b> then Checked ' +
-      '<b style="color:#C96A5E">!</b> then Pending <b style="color:#8A63D2">…</b> walks an objective through the ' +
+      '<b style="color:#E06C7A">!</b> → it becomes <b>Actionable</b> (your move) · ' +
+      '<b style="color:#9D8CFF">…</b> → it becomes <b>Pending</b> (someone else’s) · ' +
+      '<b style="color:#857F96">–</b> → no bearing.<br><br>' +
+      'The <b>furthest-along ticked step wins</b>, so Drafted <b style="color:#9D8CFF">…</b> then Checked ' +
+      '<b style="color:#E06C7A">!</b> then Pending <b style="color:#9D8CFF">…</b> walks an objective through the ' +
       'progression. Any number of steps can carry the same stance, and nothing is ever in both lists at once.<br><br>' +
       'Press and hold a row (or drag the ⠿ handle) to reorder. Cards show steps in this order.') +
     '</div>' +
@@ -1017,7 +1026,7 @@ function folderEditorHTML() {
         '<span class="grip" data-grip="' + t.key + '" aria-hidden="true">⠿</span>' +
         '<button class="tone-swatch" style="background:' + t.tone + '" data-act="tgl-tone" data-k="' + t.key + '" aria-label="Change colour"></button>' +
         '<input class="inp" data-tglabel="' + t.key + '" value="' + esc(t.label) + '" placeholder="Label" autocomplete="off">' +
-        '<button class="star' + (f.doneKey === t.key ? ' on' : '') + '" style="--t:#D4AF37"' +
+        '<button class="star' + (f.doneKey === t.key ? ' on' : '') + '" style="--t:#E4B54A"' +
         ' data-act="tgl-done" data-k="' + t.key + '" title="Done state for this folder" aria-label="Done state">★</button>' +
         (() => {
           const s = STANCES[stanceOrder(t.stance)];
@@ -1365,7 +1374,7 @@ function handleClick(e) {
     readFolderFields();
     const f = folderById(ui.editFolder);
     if (!f) return;
-    f.toggles.push(normalizeToggle({ label: 'New toggle', tone: '#F4F0E8' }, f.toggles.length));
+    f.toggles.push(normalizeToggle({ label: 'New step', tone: '#EDEAF4' }, f.toggles.length));
     touch(f); render(true); return;
   }
   if (act === 'tgl-del') {
