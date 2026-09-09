@@ -336,6 +336,19 @@ body {
 
 .search-row { display: flex; gap: 10px; align-items: center; }
 
+/* sort button — a touch control, so it lights purple; filled when a
+   non-default order is active so the state is visible at a glance */
+.sort-btn {
+  width: 46px; height: 46px; border-radius: 10px; flex-shrink: 0; padding: 0;
+  background: var(--lx-surface); border: 1px solid var(--lx-line);
+  color: var(--lx-ink-2); font-size: 18px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.sort-btn:hover { border-color: var(--lx-purple); color: var(--lx-purple); }
+.sort-btn.on { border-color: var(--lx-purple); color: var(--lx-purple); background: var(--lx-purple-soft); }
+.search-row .sort-btn { width: 42px; height: 42px; }
+.menu-sheet .m-item.sel { color: var(--lx-purple); }
+
 /* ============ fields ============ */
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field .lbl, .lbl {

@@ -178,6 +178,17 @@ Archived objectives drop out of every view except the **Archived** filter, where
 swipe offers **Restore**. Archiving is not deleting — nothing is removed and it syncs like
 any other change.
 
+## Sorting
+
+The **⇅** button beside the add button picks the list order. **Smart** is the default and
+is the original behaviour — exceptions first, then open before done, then most recently
+touched. The others are plain orders: last updated, least recently updated, last created,
+first created, and name A–Z (untitled objectives sort last, not first). The choice is
+remembered per device, guarded against a bad stored value, and the button fills purple
+whenever a non-default order is active so you can tell at a glance why the list looks
+different. On desktop the picker opens at the pointer; on the phone it comes up as a
+bottom sheet.
+
 ## Filters
 
 The default view is **Open**, so completed objectives drop out of the list once ticked.

@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -54,6 +54,19 @@ const SWIPE_TRIGGER = 58;
    tray button, a menu item — still lands. */
 const CLICK_GUARD_MS = 220;
 const DEFAULT_FILTER = 'open';   // finished work stays out of the way until asked for
+
+/* Sort orders for the list. 'smart' is the original behaviour and stays the
+   default: exceptions first, open before done, then most recently touched. */
+const SORTS = [
+  { id: 'smart',   label: 'Smart — exceptions, open, recent' },
+  { id: 'updated', label: 'Last updated' },
+  { id: 'stale',   label: 'Least recently updated' },
+  { id: 'created', label: 'Last created' },
+  { id: 'oldest',  label: 'First created' },
+  { id: 'name',    label: 'Name A–Z' }
+];
+const SORT_IDS = SORTS.map(s => s.id);
+const DEFAULT_SORT = 'smart';
 
 /* Toggle colours are stored as hex so any colour is expressible. The named
    tones of v2.0 migrate to their hex equivalents on read. */
@@ -231,12 +244,13 @@ function loadCfg() {
         // guarded: a stale or hand-edited value must not hide every objective
         filter: FILTER_KEYS.includes(c.filter) ? c.filter : DEFAULT_FILTER,
         folder: c.folder || 'all',
+        sort: SORT_IDS.includes(c.sort) ? c.sort : DEFAULT_SORT,
         // panel geometry is a property of this screen, so it is never synced
         panel: Object.assign({}, PANEL_DEF, (c.panel && typeof c.panel === 'object') ? c.panel : {})
       };
     }
   } catch (e) { /* ignore */ }
-  return { token: '', gistId: '', lastSyncAt: 0, filter: DEFAULT_FILTER, folder: 'all', panel: Object.assign({}, PANEL_DEF) };
+  return { token: '', gistId: '', lastSyncAt: 0, filter: DEFAULT_FILTER, folder: 'all', sort: DEFAULT_SORT, panel: Object.assign({}, PANEL_DEF) };
 }
 function saveCfg() { try { localStorage.setItem(CFGKEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } }
 
@@ -276,7 +290,7 @@ let db = loadDb();
 let cfg = loadCfg();
 let view = { screen: 'home', id: null };
 let ui = {
-  q: '', filter: cfg.filter, folder: cfg.folder,
+  q: '', filter: cfg.filter, folder: cfg.folder, sort: cfg.sort,
   modal: null, editFolder: null, confirm: null, menu: null,
   swipeId: null, suppressUntil: 0, tonePick: null, hint: null,
   toastMsg: '', toastBad: false, toastTimer: null,
@@ -637,6 +651,12 @@ function filtersHTML() {
 function searchHTML() {
   return '<div class="search-pill"><input id="q" type="search" placeholder="Search objectives" value="' + esc(ui.q) + '" autocomplete="off" autocorrect="off" spellcheck="false"></div>';
 }
+function sortBtnHTML() {
+  const cur = SORTS.find(x => x.id === ui.sort) || SORTS[0];
+  return '<button class="sort-btn' + (ui.sort !== DEFAULT_SORT ? ' on' : '') + '"' +
+    ' data-act="sort-menu" title="Sort: ' + esc(cur.label) + '" aria-label="Sort order">⇅</button>';
+}
+
 function fabHTML(small) {
   return '<button class="fab' + (small ? ' sm' : '') + '" data-act="new" aria-label="Add objective">+</button>';
 }
@@ -671,9 +691,18 @@ function filtered() {
     }
     return true;
   }).sort((a, b) => {
-    if (hasExc(a) !== hasExc(b)) return hasExc(a) ? -1 : 1;
-    if (isDone(a) !== isDone(b)) return isDone(a) ? 1 : -1;
-    return (b.updatedAt || 0) - (a.updatedAt || 0);
+    switch (ui.sort) {
+      case 'updated': return (b.updatedAt || 0) - (a.updatedAt || 0);
+      case 'stale':   return (a.updatedAt || 0) - (b.updatedAt || 0);
+      case 'created': return (b.createdAt || 0) - (a.createdAt || 0);
+      case 'oldest':  return (a.createdAt || 0) - (b.createdAt || 0);
+      case 'name':    // untitled sorts last, not first — an empty string would win A–Z
+        return (a.name.trim() || '￿').localeCompare(b.name.trim() || '￿', undefined, { sensitivity: 'base' });
+      default:        // smart
+        if (hasExc(a) !== hasExc(b)) return hasExc(a) ? -1 : 1;
+        if (isDone(a) !== isDone(b)) return isDone(a) ? 1 : -1;
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+    }
   });
 }
 
@@ -830,7 +859,21 @@ function renderPip() {
 
 function menuHTML() {
   if (!ui.menu) return '';
+  if (ui.menu.kind === 'sort') return sortMenuHTML();
   return ui.menu.kind === 'card' ? cardMenuHTML() : folderMenuHTML();
+}
+
+function sortMenuHTML() {
+  const at = ui.menu.x != null;
+  return '<div class="menu-scrim" data-act="close-menu"></div>' +
+    '<div class="menu-sheet items' + (at ? ' at-cursor' : '') + '" id="menu-sheet"' +
+      (at ? ' style="left:' + ui.menu.x + 'px;top:' + ui.menu.y + 'px"' : '') + '>' +
+      '<div class="m-title">Sort by</div>' +
+      SORTS.map(x =>
+        '<button class="m-item' + (ui.sort === x.id ? ' sel' : '') + '" data-act="set-sort" data-s="' + x.id + '">' +
+        (ui.sort === x.id ? '● ' : '') + esc(x.label) + '</button>').join('') +
+      '<button class="m-item dim" data-act="close-menu">Cancel</button>' +
+    '</div>';
 }
 
 function cardMenuHTML() {
@@ -907,7 +950,7 @@ function narrowHTML() {
     '</div>' +
     '<div class="bottom-stack">' +
       folderChipsHTML() + filtersHTML() +
-      '<div class="bottom-bar">' + searchHTML() + fabHTML() + '</div>' +
+      '<div class="bottom-bar">' + searchHTML() + sortBtnHTML() + fabHTML() + '</div>' +
     '</div>';
 }
 
@@ -918,7 +961,7 @@ function wideHTML() {
     (rail() ? folderRailHTML() : '') +
     '<div class="pane pane-list">' +
       brandHTML() + syncChipHTML() +
-      '<div class="search-row">' + searchHTML() + fabHTML(true) + '</div>' +
+      '<div class="search-row">' + searchHTML() + sortBtnHTML() + fabHTML(true) + '</div>' +
       (rail() ? '' : folderChipsHTML()) +
       filtersHTML() +
       '<div id="list-host">' + listHTML() + '</div>' +
@@ -1267,6 +1310,19 @@ function handleClick(e) {
 
   if (act === 'hint') { ui.hint = ui.hint === el.dataset.h ? null : el.dataset.h; render(true); return; }
   if (act === 'close-menu') { ui.menu = null; render(true); return; }
+  if (act === 'sort-menu') {
+    ui.menu = wide() ? { kind: 'sort', x: e.clientX, y: e.clientY } : { kind: 'sort', x: null, y: null };
+    render(true);
+    placeMenu();
+    return;
+  }
+  if (act === 'set-sort') {
+    ui.sort = SORT_IDS.includes(el.dataset.s) ? el.dataset.s : DEFAULT_SORT;
+    cfg.sort = ui.sort; saveCfg();
+    ui.menu = null;
+    render(true);
+    return;
+  }
   if (act === 'menu-open-card') { ui.menu = null; view = { screen: 'detail', id: el.dataset.id }; render(true); return; }
   if (act === 'menu-move') {
     const p = byId(el.dataset.id);
