@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.2.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -55,18 +55,24 @@ const SWIPE_TRIGGER = 58;
 const CLICK_GUARD_MS = 220;
 const DEFAULT_FILTER = 'open';   // finished work stays out of the way until asked for
 
-/* Sort orders for the list. 'smart' is the original behaviour and stays the
-   default: exceptions first, open before done, then most recently touched. */
+/* Sort orders for the list. Most recent is the default; 'smart' (exceptions
+   first, open before done, then recent) stays available, and the Exceptions
+   filter chip is the other way to pull those up. */
 const SORTS = [
+  { id: 'updated', label: 'Most recent' },
   { id: 'smart',   label: 'Smart — exceptions, open, recent' },
-  { id: 'updated', label: 'Last updated' },
   { id: 'stale',   label: 'Least recently updated' },
   { id: 'created', label: 'Last created' },
   { id: 'oldest',  label: 'First created' },
   { id: 'name',    label: 'Name A–Z' }
 ];
 const SORT_IDS = SORTS.map(s => s.id);
-const DEFAULT_SORT = 'smart';
+const DEFAULT_SORT = 'updated';
+/* Bumped when a stored view preference should be reset once to a new default. */
+const PREFS_V = 2;
+/* Completed objectives stay in the Open view, under a "Done today" heading, for
+   this long; after that only the Done filter shows them. */
+const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 
 /* Toggle colours are stored as hex so any colour is expressible. The named
    tones of v2.0 migrate to their hex equivalents on read. */
@@ -244,13 +250,17 @@ function loadCfg() {
         // guarded: a stale or hand-edited value must not hide every objective
         filter: FILTER_KEYS.includes(c.filter) ? c.filter : DEFAULT_FILTER,
         folder: c.folder || 'all',
-        sort: SORT_IDS.includes(c.sort) ? c.sort : DEFAULT_SORT,
+        // v3.2 made Most recent the default; a 'smart' stored by an older build
+        // was the old default, not a choice, so it is moved over once
+        sort: (c.prefsV || 0) < PREFS_V && c.sort === 'smart' ? DEFAULT_SORT
+            : SORT_IDS.includes(c.sort) ? c.sort : DEFAULT_SORT,
+        prefsV: PREFS_V,
         // panel geometry is a property of this screen, so it is never synced
         panel: Object.assign({}, PANEL_DEF, (c.panel && typeof c.panel === 'object') ? c.panel : {})
       };
     }
   } catch (e) { /* ignore */ }
-  return { token: '', gistId: '', lastSyncAt: 0, filter: DEFAULT_FILTER, folder: 'all', sort: DEFAULT_SORT, panel: Object.assign({}, PANEL_DEF) };
+  return { token: '', gistId: '', lastSyncAt: 0, filter: DEFAULT_FILTER, folder: 'all', sort: DEFAULT_SORT, prefsV: PREFS_V, panel: Object.assign({}, PANEL_DEF) };
 }
 function saveCfg() { try { localStorage.setItem(CFGKEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } }
 
@@ -378,6 +388,8 @@ function stanceOf(p) {
   return f.initialStance;               // nothing ticked yet
 }
 const isAction = p => stanceOf(p) === 'action';
+/* Done within the last day: still shown in the Open view, below the open work. */
+const recentlyDone = p => isDone(p) && now() - (p.updatedAt || 0) < RECENT_DONE_MS;
 const isWaiting = p => stanceOf(p) === 'pending';
 
 /* The selected folder, or null when the All chip is active. */
@@ -672,7 +684,7 @@ function filtered() {
     if (ui.filter === 'archived') { if (!p.archived) return false; }
     else if (p.archived) return false;
     if (fid !== 'all' && p.folderId !== fid) return false;
-    if (ui.filter === 'open' && isDone(p)) return false;
+    if (ui.filter === 'open' && isDone(p) && !recentlyDone(p)) return false;
     if (ui.filter === 'done' && !isDone(p)) return false;
     if (ui.filter === 'action' && !isAction(p)) return false;
     if (ui.filter === 'waiting' && !isWaiting(p)) return false;
@@ -740,10 +752,18 @@ function cardHTML(p) {
       '<div class="pc-name">' + esc(p.name.trim() || 'Untitled objective') + '</div>' +
       '<div class="pc-meta">' + bits.join(' · ') + '</div>' +
       '</div>' + (hasExc(p) ? EXC_SVG : '') + '</div>' +
+      nextHTML(p) +
       tags +
       '<div class="pc-tgls">' + togglesHTML(p) + '</div>' +
     '</div>' +
   '</div>';
+}
+
+/* A notes line starting "Next:" is the one thing to do, so the card shows it. */
+function nextHTML(p) {
+  if (isDone(p)) return '';
+  const m = /^\s*next:\s*(.+)$/im.exec(p.notes || '');
+  return m ? '<div class="pc-next">' + esc(m[1].trim()) + '</div>' : '';
 }
 
 function listHTML() {
@@ -759,6 +779,14 @@ function listHTML() {
     else if (ui.filter === 'waiting' && noStance('pending')) msg = 'Nothing in “' + esc(f.name) + '” can be <b style="color:#9D8CFF">Pending</b> yet.<br>Give a step the <b>…</b> stance in the folder editor.';
     else msg = 'Nothing matches this view.';
     return '<div class="empty-note">' + msg + '</div>';
+  }
+  if (ui.filter === 'open') {
+    const open = rows.filter(p => !isDone(p));
+    const done = rows.filter(isDone);
+    return '<div class="card-list">' + open.map(cardHTML).join('') +
+      (open.length ? '' : '<div class="empty-note slim">Nothing open.</div>') +
+      (done.length ? '<div class="list-sep">DONE TODAY · ' + done.length + '</div>' + done.map(cardHTML).join('') : '') +
+    '</div>';
   }
   return '<div class="card-list">' + rows.map(cardHTML).join('') + '</div>';
 }
@@ -1181,6 +1209,11 @@ function render(force) {
   if (!force && isTyping()) { ui.needsRender = true; return; }
   ui.needsRender = false;
 
+  // Rebuilding #app replaces the scrolling pane, which used to throw the list
+  // back to the top on every tick, sync and toast. Carry the offset across.
+  const sc = document.querySelector('.pane-list, .screen.home');
+  const keep = sc ? { cls: sc.classList.contains('pane-list') ? '.pane-list' : '.screen.home', top: sc.scrollTop } : null;
+
   let html = wide() ? wideHTML() : narrowHTML();
   html += pinPanelHTML();
   if (ui.editFolder) html += folderEditorHTML();
@@ -1189,6 +1222,10 @@ function render(force) {
   if (ui.confirm) html += confirmHTML();
   if (ui.toastMsg) html += '<div class="toast' + (ui.toastBad ? ' bad' : '') + '">' + esc(ui.toastMsg) + '</div>';
   $('#app').innerHTML = html;
+  if (keep && keep.top) {
+    const nsc = document.querySelector(keep.cls);
+    if (nsc) nsc.scrollTop = keep.top;
+  }
 
   if (ui.focusName) {
     ui.focusName = false;
@@ -1259,6 +1296,19 @@ function renderSyncChip() {
   const tmp = document.createElement('div');
   tmp.innerHTML = syncChipHTML();
   row.replaceWith(tmp.firstElementChild);
+}
+
+/* Fold a card shut, then run the re-render. The height is pinned first so the
+   transition has a starting point; the cards below slide up as it closes. */
+function collapseThen(wrap, done) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { done(); return; }
+  wrap.style.height = wrap.offsetHeight + 'px';
+  void wrap.offsetHeight;
+  wrap.classList.add('leaving');
+  let fired = false;
+  const finish = () => { if (!fired) { fired = true; done(); } };
+  wrap.addEventListener('transitionend', e => { if (e.target === wrap && e.propertyName === 'height') finish(); });
+  setTimeout(finish, 420);           // never strand the list if no transitionend arrives
 }
 
 /* ================= events ================= */
@@ -1377,15 +1427,20 @@ function handleClick(e) {
     const p = byId(el.dataset.id);
     if (!p) return;
     const k = el.dataset.k;
+    const wasDone = isDone(p);
     if (p.flags[k]) delete p.flags[k]; else p.flags[k] = true;
     touch(p);
-    // A card vanishing under your thumb reads as a glitch unless it is explained.
-    const gone = !filtered().some(x => x.id === p.id);
-    render(true);
-    if (gone) {
-      const f = folderOf(p);
-      toast(f && k === f.doneKey && !p.flags[k] === false ? 'Done — hidden from this view' : 'Hidden from this view');
-    }
+    // A card that leaves its place folds shut where it stands, so the cards
+    // below rise into the gap and the list keeps its scroll position. A card
+    // vanishing under your thumb reads as a glitch unless it is explained.
+    const rows = filtered();
+    const gone = !rows.some(x => x.id === p.id);
+    const moved = !gone && ui.filter === 'open' && wasDone !== isDone(p);
+    const msg = isDone(p) && !wasDone ? (gone ? 'Done — hidden from this view' : 'Done — moved to Done today')
+                                      : gone ? 'Hidden from this view' : '';
+    const wrap = el.closest('.card-wrap');
+    if ((gone || moved) && wrap) collapseThen(wrap, () => { render(true); if (msg) toast(msg); });
+    else { render(true); if (msg && (gone || moved)) toast(msg); }
     return;
   }
 

@@ -180,25 +180,40 @@ any other change.
 
 ## Sorting
 
-The **⇅** button beside the add button picks the list order. **Smart** is the default and
-is the original behaviour — exceptions first, then open before done, then most recently
-touched. The others are plain orders: last updated, least recently updated, last created,
-first created, and name A–Z (untitled objectives sort last, not first). The choice is
-remembered per device, guarded against a bad stored value, and the button fills purple
-whenever a non-default order is active so you can tell at a glance why the list looks
-different. On desktop the picker opens at the pointer; on the phone it comes up as a
-bottom sheet.
+The **⇅** button beside the add button picks the list order. **Most recent** (last
+updated first) is the default. **Smart** puts exceptions first, then open before done,
+then recent; the **Exceptions** filter chip is the other way to pull those up. The others
+are plain orders: least recently updated, last created, first created, and name A–Z
+(untitled objectives sort last, not first). The choice is remembered per device, guarded
+against a bad stored value, and the button fills purple whenever a non-default order is
+active. A device that still held the old Smart default is moved to Most recent once, on
+its first launch of v3.2.0. On desktop the picker opens at the pointer; on the phone it
+comes up as a bottom sheet.
 
 ## Filters
 
-The default view is **Open**, so completed objectives drop out of the list once ticked.
-They are not deleted: the **Complete** and **All** chips bring them back, and the stats
-line under the wordmark always counts every objective. Completing something from the list
-shows a brief toast, since a card silently vanishing under your thumb otherwise reads as
-a glitch.
+The default view is **Open**. Ticking an objective's done step folds its card shut where
+it stands: the cards below rise into the gap and the list keeps its scroll position (every
+re-render now carries the scroll offset across, so syncs and toasts no longer throw the
+list back to the top). The card reappears under a **Done today** heading at the foot of the
+Open view, dimmed, for 24 hours after it was last touched; after that only the **Done**
+filter shows it, which is the archive for finished work. Nothing is deleted. The stats
+line under the wordmark always counts every objective.
+
+A notes line that starts with `Next:` is shown on the card itself, under the name, so the
+one thing to do is visible without opening the objective.
 
 The chosen filter is remembered per device (in `localStorage`, not synced — it is a view
 preference, not data).
+
+## Active items folder
+
+The **Active items** folder is written by `tools/active_items_to_ledger.py`, which mirrors
+a feed of Jordan's live work from Drive (one card per project or thread). Its four steps
+are owned by the script: **Claude on it** and **Waiting on others** (both Pending),
+**Your move** (Actionable) and **Done**. Notes carry `Next:` and a dated update log, newest
+first. Jordan's own Done tick is kept until the feed brings a newer update, and is
+reported back through `ledger-done.json`. Format and rules are in the script's docstring.
 
 ## How the data works
 
@@ -280,7 +295,7 @@ same thing.
 
 ## Versions and updating
 
-The running build is shown as a faded `v1.3.0` beside the wordmark, and again at the foot
+The running build is shown as a faded `v3.2.0` beside the wordmark, and again at the foot
 of the sync pane. That is the only reliable way to tell what a given device is actually
 running — a PWA gives no other signal.
 
