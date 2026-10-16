@@ -201,13 +201,26 @@ body {
 .card-wrap.is-archived { opacity: 0.5; }
 .card-wrap.is-complete .pc-name { color: var(--lx-gold); }
 /* Done today: still listed in the Open view, but quieted under its heading. */
-.list-sep ~ .card-wrap.is-complete { opacity: 0.62; }
+.list-sep:not(.grp) ~ .card-wrap.is-complete { opacity: 0.62; }
 .list-sep {
   margin: 10px 2px 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em;
   color: var(--lx-gold); display: flex; align-items: center; gap: 10px;
 }
 .list-sep::after { content: ''; flex: 1; height: 1px; background: rgba(228,181,74,0.28); }
 .empty-note.slim { padding: 14px 0 4px; }
+/* Category headings: quieter than Done today, which stays gold. */
+.list-sep.grp { color: var(--lx-ink-2); }
+.list-sep.grp::after { background: var(--lx-line); }
+.card-list > .list-sep.grp:first-child { margin-top: 2px; }
+/* Shown only while a status click is holding the list in place. It floats over
+   the list from a zero-height sticky dock, so appearing never moves a card. */
+.resort-dock { position: sticky; top: 6px; height: 0; z-index: 6; display: flex; align-items: flex-start; justify-content: center; overflow: visible; }
+.resort {
+  background: var(--lx-surface-2); border: 1px solid var(--lx-axis); border-radius: 999px;
+  color: var(--lx-ink-2); font: inherit; font-size: 11.5px; padding: 5px 12px; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.55);
+}
+.resort:hover { color: var(--lx-ink-2); border-color: var(--lx-axis); }
 /* A card leaving its place folds shut so the cards below rise into the gap.
    The negative margin eats the list's 12px gap as the height reaches zero. */
 .card-wrap.leaving {

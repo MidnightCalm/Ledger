@@ -190,6 +190,22 @@ active. A device that still held the old Smart default is moved to Most recent o
 its first launch of v3.2.0. On desktop the picker opens at the pointer; on the phone it
 comes up as a bottom sheet.
 
+Clicking a step on a card holds the list order (since v3.3.0): under Most recent the
+click would otherwise lift the card to the top, away from your finger. While the order is
+held, a small **Order held · tap to re-sort** chip floats at the top of the list; it never
+moves a card when it appears. The order is released by that chip, by picking a sort,
+filter, folder, search or tag, by pull to sync, by reloading, or by coming back to the app
+after more than two minutes away. Cards that arrive while it is held go on top.
+
+## Categories
+
+Since v3.3.0 cards are grouped under **Solar**, **PQ**, **BESS** and **Miscellaneous**
+headings, keeping the sort order inside each group. A card's own `category` field wins
+(the Active items feed sets it); without one it is read from the Type at the end of a
+`Company - Address - Type` title, then from a `solar`, `pq` or `bess` tag, then from its
+folder's name, and otherwise it is Miscellaneous. A view that is all one category (the
+Solar folder, say) shows no headings. The Done today section stays ungrouped.
+
 ## Filters
 
 The default view is **Open**. Ticking an objective's done step folds its card shut where
@@ -206,14 +222,27 @@ one thing to do is visible without opening the objective.
 The chosen filter is remembered per device (in `localStorage`, not synced — it is a view
 preference, not data).
 
+## Exclusive steps
+
+Since v3.3.0 ticking a step turns off the steps it cannot coexist with, in one click:
+
+- In every folder, a step with the **!** stance (Actionable) turns off ticked **…** steps
+  (Pending) and the other way round, so a card leaves Actionable the moment it is marked
+  Pending. Steps of the same stance still stack (Drafted then Checked), and Done is left
+  alone, so unticking Done restores where the card stood.
+- A folder set to **Steps lit: One at a time** in the folder editor goes further: ticking
+  any step, Done included, turns every other step off. Active items is set this way.
+
 ## Active items folder
 
 The **Active items** folder is written by `tools/active_items_to_ledger.py`, which mirrors
 a feed of Jordan's live work from Drive (one card per project or thread). Its four steps
 are owned by the script: **Claude on it** and **Waiting on others** (both Pending),
-**Your move** (Actionable) and **Done**. Notes carry `Next:` and a dated update log, newest
-first. Jordan's own Done tick is kept until the feed brings a newer update, and is
-reported back through `ledger-done.json`. Format and rules are in the script's docstring.
+**Your move** (Actionable) and **Done**, one at a time. Notes carry `Next:` and a dated
+update log, newest first. Any step Jordan clicks (not only Done, since v3.3.0) is kept
+until the feed brings a newer update or adopts the same state, and is reported back
+through `ledger-done.json` (`done` and `moved`). Format and rules are in the script's
+docstring.
 
 ## How the data works
 
@@ -295,7 +324,7 @@ same thing.
 
 ## Versions and updating
 
-The running build is shown as a faded `v3.2.0` beside the wordmark, and again at the foot
+The running build is shown as a faded `v3.3.0` beside the wordmark, and again at the foot
 of the sync pane. That is the only reliable way to tell what a given device is actually
 running — a PWA gives no other signal.
 

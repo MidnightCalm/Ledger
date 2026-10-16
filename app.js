@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -28,9 +28,9 @@ const PUSH_DEBOUNCE = 1800;
 const POLL_MS = 60000;
 const TOMBSTONE_MS = 30 * 24 * 60 * 60 * 1000;
 
-const PROJ_FIELDS = ['id', 'folderId', 'name', 'owner', 'notes', 'exception', 'tags', 'flags', 'pinned', 'archived', 'deleted', 'createdAt', 'updatedAt'];
+const PROJ_FIELDS = ['id', 'folderId', 'name', 'owner', 'notes', 'exception', 'tags', 'category', 'flags', 'pinned', 'archived', 'deleted', 'createdAt', 'updatedAt'];
 const PANEL_DEF = { x: 20, y: 20, w: 270, h: 230, collapsed: false };
-const FOLDER_FIELDS = ['id', 'name', 'toggles', 'doneKey', 'initialStance', 'order', 'deleted', 'createdAt', 'updatedAt'];
+const FOLDER_FIELDS = ['id', 'name', 'toggles', 'doneKey', 'initialStance', 'single', 'order', 'deleted', 'createdAt', 'updatedAt'];
 const FILTER_KEYS = ['all', 'open', 'action', 'waiting', 'exceptions', 'done', 'archived'];
 
 /* Toggles are steps in order, and each carries a stance: after ticking it, is
@@ -73,6 +73,20 @@ const PREFS_V = 2;
 /* Completed objectives stay in the Open view, under a "Done today" heading, for
    this long; after that only the Done filter shows them. */
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
+
+/* Cards group under these headings, in this order. A card's own category wins;
+   without one it is read from the Type at the end of a "Company - Address -
+   Type" title, then from a solar/pq/bess tag, then from its folder's name. */
+const CATEGORIES = ['Solar', 'PQ', 'BESS', 'Miscellaneous'];
+const CAT_WORDS = [
+  ['Solar', /\b(solar|pv|photovoltaic)\b/],
+  ['PQ', /\b(pq|power quality|power conditioning|power factor|capacitor|a?svg|harmonics?)\b/],
+  ['BESS', /\b(bess|battery|batteries|storage|ups|pcs)\b/],
+  ['Miscellaneous', /\bmisc/]
+];
+/* A status click holds the list order so the card stays under your finger.
+   Coming back to the app after this long counts as a fresh look and re-sorts. */
+const HOLD_RESUME_MS = 2 * 60 * 1000;
 
 /* Toggle colours are stored as hex so any colour is expressible. The named
    tones of v2.0 migrate to their hex equivalents on read. */
@@ -146,6 +160,7 @@ function normalizeFolder(f, i) {
     toggles: list,
     doneKey,
     initialStance: (f.initialStance === 'pending' || f.initialStance === 'none') ? f.initialStance : 'action',
+    single: !!f.single,
     order: typeof f.order === 'number' ? f.order : i,
     deleted: !!f.deleted,
     createdAt: f.createdAt || now(),
@@ -164,6 +179,17 @@ function normTags(list) {
   return out.sort();
 }
 const parseTags = str => normTags(String(str || '').split(/[,\n]/));
+
+/* A stored category is one of CATEGORIES exactly, or empty (derive it). */
+function normCategory(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return CATEGORIES.find(c => c.toLowerCase() === s) || '';
+}
+function categoryIn(text) {
+  const s = String(text || '').toLowerCase();
+  for (const [cat, re] of CAT_WORDS) if (re.test(s)) return cat;
+  return '';
+}
 const tagsToStr = tags => (tags || []).join(', ');
 
 function normalizeProject(p) {
@@ -179,6 +205,7 @@ function normalizeProject(p) {
     notes: typeof p.notes === 'string' ? p.notes : '',
     exception: typeof p.exception === 'string' ? p.exception : '',
     tags: normTags(p.tags),
+    category: normCategory(p.category),
     flags,
     pinned: !!p.pinned,
     archived: !!p.archived,
@@ -303,6 +330,7 @@ let ui = {
   q: '', filter: cfg.filter, folder: cfg.folder, sort: cfg.sort,
   modal: null, editFolder: null, confirm: null, menu: null,
   swipeId: null, suppressUntil: 0, tonePick: null, hint: null,
+  hold: null,             // list order frozen by a status click, or null
   toastMsg: '', toastBad: false, toastTimer: null,
   needsRender: false, focusName: false,
   syncState: 'idle', syncMsg: ''
@@ -391,6 +419,37 @@ const isAction = p => stanceOf(p) === 'action';
 /* Done within the last day: still shown in the Open view, below the open work. */
 const recentlyDone = p => isDone(p) && now() - (p.updatedAt || 0) < RECENT_DONE_MS;
 const isWaiting = p => stanceOf(p) === 'pending';
+
+/* Ticking a step turns off the steps it cannot coexist with. In a one-step-at-
+   a-time folder that is every other step, Done included. Elsewhere it is the
+   steps of the opposite stance: Pending clears Checked, Need to respond clears
+   Waiting for response, so a card leaves Actionable the moment it is marked
+   Pending. Same-stance steps (Drafted then Checked) still stack, and Done is
+   left alone so unticking it restores where the card stood. */
+function tickStep(p, k) {
+  const f = folderOf(p);
+  const t = f && f.toggles.find(x => x.key === k);
+  if (f && t) {
+    for (const x of f.toggles) {
+      if (x.key === k || !p.flags[x.key]) continue;
+      if (f.single || (t.stance !== 'none' && x.stance !== 'none' && x.stance !== t.stance)) delete p.flags[x.key];
+    }
+  }
+  p.flags[k] = true;
+}
+
+function categoryOf(p) {
+  if (p.category) return p.category;
+  const parts = p.name.split(/\s+[-–—]\s+/);
+  const fromTitle = parts.length > 1 ? categoryIn(parts[parts.length - 1]) : '';
+  if (fromTitle) return fromTitle;
+  for (const c of ['Solar', 'PQ', 'BESS']) {
+    const re = CAT_WORDS.find(w => w[0] === c)[1];
+    if (p.tags.some(t => re.test(t.replace(/-/g, ' ')))) return c;
+  }
+  const f = folderOf(p);
+  return (f && categoryIn(f.name)) || 'Miscellaneous';
+}
 
 /* The selected folder, or null when the All chip is active. */
 function currentFolder() {
@@ -680,7 +739,7 @@ function filtered() {
   const tagOnly = raw.startsWith('#');
   const q = tagOnly ? raw.slice(1) : raw;
   const fid = ui.folder;
-  return live().filter(p => {
+  const rows = live().filter(p => {
     if (ui.filter === 'archived') { if (!p.archived) return false; }
     else if (p.archived) return false;
     if (fid !== 'all' && p.folderId !== fid) return false;
@@ -702,20 +761,42 @@ function filtered() {
       }
     }
     return true;
-  }).sort((a, b) => {
-    switch (ui.sort) {
-      case 'updated': return (b.updatedAt || 0) - (a.updatedAt || 0);
-      case 'stale':   return (a.updatedAt || 0) - (b.updatedAt || 0);
-      case 'created': return (b.createdAt || 0) - (a.createdAt || 0);
-      case 'oldest':  return (a.createdAt || 0) - (b.createdAt || 0);
-      case 'name':    // untitled sorts last, not first — an empty string would win A–Z
-        return (a.name.trim() || '￿').localeCompare(b.name.trim() || '￿', undefined, { sensitivity: 'base' });
-      default:        // smart
-        if (hasExc(a) !== hasExc(b)) return hasExc(a) ? -1 : 1;
-        if (isDone(a) !== isDone(b)) return isDone(a) ? 1 : -1;
-        return (b.updatedAt || 0) - (a.updatedAt || 0);
-    }
-  });
+  }).sort(sortCmp);
+  return held(rows);
+}
+
+/* While a status click holds the order, cards keep the places they had when it
+   was taken; anything that arrived since (a new feed card) goes on top. */
+function held(rows) {
+  if (!ui.hold) return rows;
+  const rank = new Map(ui.hold.map((id, i) => [id, i]));
+  return rows.slice().sort((a, b) => (rank.has(a.id) ? rank.get(a.id) : -1) - (rank.has(b.id) ? rank.get(b.id) : -1));
+}
+function holdOrder() {
+  if (!ui.hold) ui.hold = live().sort(sortCmp).map(p => p.id);
+}
+function releaseHold() { ui.hold = null; }
+/* True when the held order differs from what a fresh sort would give. */
+function holdStale() {
+  if (!ui.hold) return false;
+  const shown = filtered();
+  const fresh = shown.slice().sort(sortCmp);
+  return shown.some((p, i) => p !== fresh[i]);
+}
+
+function sortCmp(a, b) {
+  switch (ui.sort) {
+    case 'updated': return (b.updatedAt || 0) - (a.updatedAt || 0);
+    case 'stale':   return (a.updatedAt || 0) - (b.updatedAt || 0);
+    case 'created': return (b.createdAt || 0) - (a.createdAt || 0);
+    case 'oldest':  return (a.createdAt || 0) - (b.createdAt || 0);
+    case 'name':    // untitled sorts last, not first — an empty string would win A–Z
+      return (a.name.trim() || '￿').localeCompare(b.name.trim() || '￿', undefined, { sensitivity: 'base' });
+    default:        // smart
+      if (hasExc(a) !== hasExc(b)) return hasExc(a) ? -1 : 1;
+      if (isDone(a) !== isDone(b)) return isDone(a) ? 1 : -1;
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+  }
 }
 
 function cardHTML(p) {
@@ -780,15 +861,30 @@ function listHTML() {
     else msg = 'Nothing matches this view.';
     return '<div class="empty-note">' + msg + '</div>';
   }
+  // a zero-height sticky dock, so the chip appearing never shifts the cards
+  const resort = holdStale()
+    ? '<div class="resort-dock"><button class="resort" data-act="resort">Order held · tap to re-sort</button></div>' : '';
   if (ui.filter === 'open') {
     const open = rows.filter(p => !isDone(p));
     const done = rows.filter(isDone);
-    return '<div class="card-list">' + open.map(cardHTML).join('') +
+    return resort + '<div class="card-list">' + groupedHTML(open) +
       (open.length ? '' : '<div class="empty-note slim">Nothing open.</div>') +
       (done.length ? '<div class="list-sep">DONE TODAY · ' + done.length + '</div>' + done.map(cardHTML).join('') : '') +
     '</div>';
   }
-  return '<div class="card-list">' + rows.map(cardHTML).join('') + '</div>';
+  return resort + '<div class="card-list">' + groupedHTML(rows) + '</div>';
+}
+
+/* Cards under Solar, PQ, BESS and Miscellaneous headings, keeping the sort
+   order inside each. One heading over everything says nothing, so a view that
+   is all one category (the Solar folder, say) is left plain. */
+function groupedHTML(rows) {
+  const by = new Map(CATEGORIES.map(c => [c, []]));
+  for (const p of rows) by.get(categoryOf(p)).push(p);
+  const used = CATEGORIES.filter(c => by.get(c).length);
+  if (used.length < 2) return rows.map(cardHTML).join('');
+  return used.map(c => '<div class="list-sep grp">' + esc(c.toUpperCase()) + ' · ' + by.get(c).length + '</div>' +
+    by.get(c).map(cardHTML).join('')).join('');
 }
 
 function statsText() {
@@ -1079,6 +1175,16 @@ function folderEditorHTML() {
       hintHTML('starts', 'Where a brand-new objective sits before anything is ticked.') +
     '</div>' +
 
+    '<div class="field">' + lblHTML('STEPS LIT', '', 'single') +
+      '<div class="seg inline">' +
+        [[false, 'Several'], [true, 'One at a time']].map(([v, l]) =>
+          '<button class="' + (f.single === v ? 'active' : '') + '" data-act="folder-single" data-s="' + (v ? '1' : '0') + '">' + l + '</button>').join('') +
+      '</div>' +
+      hintHTML('single', '<b>One at a time</b>: ticking a step turns every other step off, Done included, so the card is always in exactly one state. ' +
+        '<b>Several</b>: steps of the same stance stack (Drafted then Checked), but ticking a <b style="color:#E06C7A">!</b> step still turns off any ticked ' +
+        '<b style="color:#9D8CFF">…</b> step and the other way round.') +
+    '</div>' +
+
     '<div class="field">' + lblHTML('STEPS, IN ORDER', '', 'steps') +
       hintHTML('steps',
       '★ marks the folder’s <b>done</b> state: hidden by the Open filter and tallied above. Every folder has exactly one.<br><br>' +
@@ -1088,7 +1194,8 @@ function folderEditorHTML() {
       '<b style="color:#857F96">–</b> → no bearing.<br><br>' +
       'The <b>furthest-along ticked step wins</b>, so Drafted <b style="color:#9D8CFF">…</b> then Checked ' +
       '<b style="color:#E06C7A">!</b> then Pending <b style="color:#9D8CFF">…</b> walks an objective through the ' +
-      'progression. Any number of steps can carry the same stance, and nothing is ever in both lists at once.<br><br>' +
+      'progression. Any number of steps can carry the same stance, and nothing is ever in both lists at once: ticking a ' +
+      '<b style="color:#E06C7A">!</b> step turns off ticked <b style="color:#9D8CFF">…</b> steps, and the other way round.<br><br>' +
       'Press and hold a row (or drag the ⠿ handle) to reorder. Cards show steps in this order.') +
     '</div>' +
 
@@ -1330,6 +1437,7 @@ function handleClick(e) {
 
   if (act === 'tag') {
     e.stopPropagation();
+    releaseHold();
     ui.q = '#' + el.dataset.t;
     ui.folder = 'all'; cfg.folder = 'all';
     ui.filter = 'all'; cfg.filter = 'all';
@@ -1352,8 +1460,9 @@ function handleClick(e) {
   if (act === 'open') { view = { screen: 'detail', id: el.dataset.id }; render(true); return; }
   if (act === 'home') { view = { screen: 'home', id: null }; render(true); return; }
   if (act === 'new') { createProject(); return; }
-  if (act === 'filter') { ui.filter = el.dataset.f; cfg.filter = ui.filter; saveCfg(); render(true); return; }
-  if (act === 'folder') { ui.folder = el.dataset.id; cfg.folder = ui.folder; saveCfg(); render(true); return; }
+  if (act === 'filter') { releaseHold(); ui.filter = el.dataset.f; cfg.filter = ui.filter; saveCfg(); render(true); return; }
+  if (act === 'folder') { releaseHold(); ui.folder = el.dataset.id; cfg.folder = ui.folder; saveCfg(); render(true); return; }
+  if (act === 'resort') { releaseHold(); render(true); return; }
   if (act === 'new-folder') { createFolder(); return; }
   if (act === 'edit-folder') { ui.editFolder = el.dataset.id; ui.tonePick = null; render(true); return; }
   if (act === 'close-folder') { readFolderFields(); ui.editFolder = null; ui.tonePick = null; render(true); return; }
@@ -1367,6 +1476,7 @@ function handleClick(e) {
     return;
   }
   if (act === 'set-sort') {
+    releaseHold();
     ui.sort = SORT_IDS.includes(el.dataset.s) ? el.dataset.s : DEFAULT_SORT;
     cfg.sort = ui.sort; saveCfg();
     ui.menu = null;
@@ -1386,7 +1496,7 @@ function handleClick(e) {
     return;
   }
   if (act === 'menu-edit') { ui.menu = null; ui.editFolder = el.dataset.id; ui.tonePick = null; render(true); return; }
-  if (act === 'menu-only') { ui.menu = null; ui.folder = el.dataset.id; cfg.folder = ui.folder; saveCfg(); render(true); return; }
+  if (act === 'menu-only') { releaseHold(); ui.menu = null; ui.folder = el.dataset.id; cfg.folder = ui.folder; saveCfg(); render(true); return; }
   if (act === 'menu-new') { ui.menu = null; createFolder(); return; }
 
   if (act === 'pin' || act === 'unpin' || act === 'menu-pin') {
@@ -1428,7 +1538,10 @@ function handleClick(e) {
     if (!p) return;
     const k = el.dataset.k;
     const wasDone = isDone(p);
-    if (p.flags[k]) delete p.flags[k]; else p.flags[k] = true;
+    // the click bumps updatedAt, which under Most recent would lift the card to
+    // the top; hold the order so it stays where it was clicked
+    holdOrder();
+    if (p.flags[k]) delete p.flags[k]; else tickStep(p, k);
     touch(p);
     // A card that leaves its place folds shut where it stands, so the cards
     // below rise into the gap and the list keeps its scroll position. A card
@@ -1481,6 +1594,13 @@ function handleClick(e) {
     f.initialStance = el.dataset.s;
     touch(f); render(true); return;
   }
+  if (act === 'folder-single') {
+    readFolderFields();
+    const f = folderById(ui.editFolder);
+    if (!f) return;
+    f.single = el.dataset.s === '1';
+    touch(f); render(true); return;
+  }
   if (act === 'tgl-add') {
     readFolderFields();
     const f = folderById(ui.editFolder);
@@ -1518,7 +1638,7 @@ document.addEventListener('click', handleClick);
    caret and scroll position survive. */
 document.addEventListener('input', e => {
   const el = e.target;
-  if (el.id === 'q') { ui.q = el.value; renderList(); return; }
+  if (el.id === 'q') { releaseHold(); ui.q = el.value; renderList(); return; }
   if (el.id === 'f-token') { cfg.token = el.value.trim(); saveCfg(); refreshSettingsButtons(); return; }
   if (el.id === 'f-gist') { cfg.gistId = parseGistId(el.value); saveCfg(); refreshSettingsButtons(); return; }
   if (el.id === 'fe-name' || el.dataset.tglabel) { readFolderFields(); return; }
@@ -1881,7 +2001,7 @@ document.addEventListener('focusout', () => {
     const go = armed && dist >= THRESH;
     sc = null; armed = false;
     hide();
-    if (go) doSync({ loud: true });
+    if (go) { releaseHold(); render(true); doSync({ loud: true }); }
   }
   document.addEventListener('pointerup', release);
   document.addEventListener('pointercancel', release);
@@ -1895,7 +2015,7 @@ document.addEventListener('focusout', () => {
     show(acc * 0.5, acc * 0.5 >= THRESH);
     clearTimeout(decay);
     decay = setTimeout(() => { acc = 0; hide(); }, 400);
-    if (acc * 0.5 >= THRESH) { acc = 0; clearTimeout(decay); hide(); doSync({ loud: true }); }
+    if (acc * 0.5 >= THRESH) { acc = 0; clearTimeout(decay); hide(); releaseHold(); render(true); doSync({ loud: true }); }
   }, { passive: true });
 })();
 
@@ -2071,9 +2191,12 @@ window.addEventListener('resize', onViewportChange);
 
 window.addEventListener('online', () => { ui.syncState = 'idle'; doSync(); });
 window.addEventListener('offline', () => { ui.syncState = 'offline'; renderSyncChip(); });
+let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') doSync();
-  else { clearTimeout(pushTimer); if (linked()) doSync(); }
+  if (document.visibilityState === 'visible') {
+    if (ui.hold && hiddenAt && now() - hiddenAt > HOLD_RESUME_MS) { releaseHold(); render(); }
+    doSync();
+  } else { hiddenAt = now(); clearTimeout(pushTimer); if (linked()) doSync(); }
 });
 
 /* Update path. The worker is asked to check for a new build on every launch and
