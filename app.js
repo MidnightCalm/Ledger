@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.3.1';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -1315,6 +1315,9 @@ function isTyping() {
 function render(force) {
   if (!force && isTyping()) { ui.needsRender = true; return; }
   ui.needsRender = false;
+  // a folder deleted on another device (or retired by the feed script) must not
+  // leave this one staring at an empty list under no highlighted chip
+  if (ui.folder !== 'all' && !folderById(ui.folder)) { ui.folder = 'all'; cfg.folder = 'all'; saveCfg(); }
 
   // Rebuilding #app replaces the scrolling pane, which used to throw the list
   // back to the top on every tick, sync and toast. Carry the offset across.

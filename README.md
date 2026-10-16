@@ -233,16 +233,20 @@ Since v3.3.0 ticking a step turns off the steps it cannot coexist with, in one c
 - A folder set to **Steps lit: One at a time** in the folder editor goes further: ticking
   any step, Done included, turns every other step off. Active items is set this way.
 
-## Active items folder
+## Feed cards (formerly the Active items folder)
 
-The **Active items** folder is written by `tools/active_items_to_ledger.py`, which mirrors
-a feed of Jordan's live work from Drive (one card per project or thread). Its four steps
-are owned by the script: **Claude on it** and **Waiting on others** (both Pending),
-**Your move** (Actionable) and **Done**, one at a time. Notes carry `Next:` and a dated
-update log, newest first. Any step Jordan clicks (not only Done, since v3.3.0) is kept
-until the feed brings a newer update or adopts the same state, and is reported back
-through `ledger-done.json` (`done` and `moved`). Format and rules are in the script's
-docstring.
+`tools/active_items_to_ledger.py` mirrors a feed of Jordan's live work from Drive, one
+card per project or thread, titled `Company - Address - Type`, tagged `active` plus the
+project's LDC and who assigned it. Since script v4 (2026-10-16) each card sits in the
+folder for its category: **Solar**, **Power Quality**, **BESS** or **Miscellaneous**, and
+its state uses that folder's own steps: your move leaves no Pending or Done step ticked,
+waiting (and Claude on it, which also shows "Claude on it" in the reference line) ticks
+Pending, done ticks the done step. Drafted and Checked are yours and left alone. The old
+Active items folder was retired once empty. Notes carry `Next:` and a dated update log,
+newest first. Any step Jordan clicks is kept until the feed brings a newer update or
+adopts the same state, and is reported back through `ledger-done.json` (`done` and
+`moved`); a card he moves to another folder stays there until its category changes.
+Format and rules are in the script's docstring.
 
 ## How the data works
 
@@ -324,7 +328,7 @@ same thing.
 
 ## Versions and updating
 
-The running build is shown as a faded `v3.3.0` beside the wordmark, and again at the foot
+The running build is shown as a faded `v3.3.1` beside the wordmark, and again at the foot
 of the sync pane. That is the only reliable way to tell what a given device is actually
 running — a PWA gives no other signal.
 
