@@ -153,6 +153,23 @@ body {
 .sync-chip.err { color: var(--lx-alert); border-color: var(--lx-alert-line); }
 .sync-chip:active { border-color: var(--lx-purple); }
 
+/* Routine health and PC sync: one quiet row under the sync chip. Green is new to
+   the theme and only ever means "ran as planned"; amber reuses gold, red the alert. */
+.health-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px 6px; margin-top: 7px; }
+.health-row:empty { display: none; }
+.hchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+  background: transparent; border: 1px solid var(--lx-line);
+  color: var(--lx-muted); font-family: inherit; font-variant-numeric: tabular-nums;
+}
+.hchip .sdot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.hchip.ok { color: #6FC98B; border-color: rgba(111,201,139,0.30); }
+.hchip.amber { color: var(--lx-gold); border-color: rgba(228,181,74,0.40); }
+.hchip.bad { color: var(--lx-alert); border-color: var(--lx-alert-line); }
+.hchip:active { border-color: var(--lx-purple); }
+
 /* ============ chip rows ============ */
 .seg {
   display: flex; gap: 5px; background: transparent; border-radius: 999px;
@@ -267,6 +284,17 @@ body {
   font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--lx-muted); font-variant-numeric: tabular-nums;
 }
+
+/* Due date: purple-grey while it is far off, gold inside a week, red on the day
+   and after. Coloured at render time from the date alone. */
+.pc-due {
+  align-self: flex-start;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; font-variant-numeric: tabular-nums;
+  padding: 2px 7px; border-radius: 5px; border: 1px solid var(--lx-line); color: var(--lx-ink-2);
+}
+.pc-due.soon { color: var(--lx-gold); border-color: rgba(228,181,74,0.45); background: var(--lx-gold-soft); }
+.pc-due.over { color: var(--lx-alert); border-color: var(--lx-alert-line); background: var(--lx-alert-soft); }
+.pc-due.done { color: var(--lx-muted); }
 
 .exc-ico { width: 20px; height: 20px; flex-shrink: 0; color: var(--lx-alert); margin-top: 1px; }
 .exc-ico .tri { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }

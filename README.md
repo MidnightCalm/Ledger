@@ -246,7 +246,40 @@ Active items folder was retired once empty. Notes carry `Next:` and a dated upda
 newest first. Any step Jordan clicks is kept until the feed brings a newer update or
 adopts the same state, and is reported back through `ledger-done.json` (`done` and
 `moved`); a card he moves to another folder stays there until its category changes.
-Format and rules are in the script's docstring.
+Format and rules are in `G:\My Drive\Ledger feed\LEDGER-SCHEMA.md` (owned by the Ledger
+refresh thread) and the script's docstring.
+
+Since script v6 (2026-10-19, review fixes F126 and F172):
+
+- A card is deleted only by `"state": "remove"`. An open card left out of a feed is kept
+  with the alert *Missing from feed …*; a done card left out is archived, and the **Done**
+  filter shows archived done cards too.
+- A feed is refused when more than three open cards vanish from it at once, when its
+  `base` does not lead back to the last feed applied, or when it is older than that feed.
+  It moves to `Ledger feed\refused\` and a **Ledger feed refused** card appears in
+  Miscellaneous until a good feed lands.
+- Failures are logged and counted, gh calls time out, and the Gist is read again just
+  before every write (the app does the same). `ledger-v2.json` is copied once a day to
+  `Ledger feed\backups\` and kept 30 days.
+- The script writes a heartbeat, `pc-sync.json`, into the Gist at least every five
+  minutes, and merges the routines' `health-*.json` records into `routine-health.json`.
+
+## Health chips and due dates (v3.4.0)
+
+Under the sync chip sits one row of routine chips (Mail, ClickUp, Gas AM, Gas PM,
+Weekly, Brief…) and, last, **PC sync**. A routine chip is green when its last scheduled
+run reported back fine, amber after one missed or failed run, red after two in a row, and
+grey when paused or not yet due. PC sync shows how long ago the PC script last ran
+cleanly: amber at 15 minutes, red at two hours. Hover a chip (or tap it on the phone) for
+the note, the times and the last error.
+
+A card can carry a **due** date (set by the feed, or in the card's Due field). The card
+shows it as a small tag: plain while it is more than a week out, gold inside a week, red
+on the day and after. It is coloured when drawn, so nothing has to rewrite the card as
+the date approaches.
+
+An unreadable or missing `ledger-v2.json` in the Gist is now a sync error. The app no
+longer falls back to the frozen v1 `ledger.json`.
 
 ## How the data works
 
@@ -328,14 +361,15 @@ same thing.
 
 ## Versions and updating
 
-The running build is shown as a faded `v3.3.1` beside the wordmark, and again at the foot
+The running build is shown as a faded `v3.4.0` beside the wordmark, and again at the foot
 of the sync pane. That is the only reliable way to tell what a given device is actually
 running — a PWA gives no other signal.
 
-On every release, bump **both**:
+On every release, bump **all three**:
 
 - `APP_VERSION` in `app.js`
 - `CACHE` in `sw.js`
+- the `?v=` on both links in `index.html`
 
 They are separate files and cannot share a constant, so they drift silently if you forget.
 

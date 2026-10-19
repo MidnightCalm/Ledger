@@ -11,16 +11,22 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.3.1';
+const APP_VERSION = '3.4.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
 /* v2 lives in its own Gist file. A v1 client would strip the fields it does not
    know about and push the result back, wiping folders and flags for everyone;
    giving v2 a separate filename makes that impossible. ledger.json is left in
-   place untouched, as a frozen pre-folders backup. */
+   place untouched, as a frozen pre-folders backup, and is never read again: an
+   unreadable ledger-v2.json is a sync error, not a cue to import old cards. */
 const GIST_FILE = 'ledger-v2.json';
-const GIST_FILE_V1 = 'ledger.json';
+/* Written by the PC sync script beside the store: its heartbeat, and the
+   routines' health summary. Read-only here. */
+const PC_FILE = 'pc-sync.json';
+const HEALTH_FILE = 'routine-health.json';
+const PC_AMBER_MS = 15 * 60 * 1000;
+const PC_RED_MS = 2 * 60 * 60 * 1000;
 const GIST_DESC = 'Ledger — objective tracker (synced data)';
 
 const API = 'https://api.github.com';
@@ -28,7 +34,7 @@ const PUSH_DEBOUNCE = 1800;
 const POLL_MS = 60000;
 const TOMBSTONE_MS = 30 * 24 * 60 * 60 * 1000;
 
-const PROJ_FIELDS = ['id', 'folderId', 'name', 'owner', 'notes', 'exception', 'tags', 'category', 'flags', 'pinned', 'archived', 'deleted', 'createdAt', 'updatedAt'];
+const PROJ_FIELDS = ['id', 'folderId', 'name', 'owner', 'notes', 'exception', 'tags', 'category', 'due', 'flags', 'pinned', 'archived', 'deleted', 'createdAt', 'updatedAt'];
 const PANEL_DEF = { x: 20, y: 20, w: 270, h: 230, collapsed: false };
 const FOLDER_FIELDS = ['id', 'name', 'toggles', 'doneKey', 'initialStance', 'single', 'order', 'deleted', 'createdAt', 'updatedAt'];
 const FILTER_KEYS = ['all', 'open', 'action', 'waiting', 'exceptions', 'done', 'archived'];
@@ -191,6 +197,8 @@ function categoryIn(text) {
   return '';
 }
 const tagsToStr = tags => (tags || []).join(', ');
+/* A due date is a calendar day, yyyy-mm-dd, read in the device's own time zone. */
+const normDue = v => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.trim())) ? v.trim() : '';
 
 function normalizeProject(p) {
   const flags = {};
@@ -206,6 +214,7 @@ function normalizeProject(p) {
     exception: typeof p.exception === 'string' ? p.exception : '',
     tags: normTags(p.tags),
     category: normCategory(p.category),
+    due: normDue(p.due),
     flags,
     pinned: !!p.pinned,
     archived: !!p.archived,
@@ -565,21 +574,43 @@ async function api(method, path, body) {
   return res.status === 204 ? null : res.json();
 }
 
-async function readFile(g, name) {
+/* The file's full text, or null when the Gist has no such file. GitHub cuts
+   long files short in the API reply; the raw copy is fetched then, and a failed
+   fetch is an error rather than a short file. */
+async function readText(g, name) {
   const f = g && g.files && g.files[name];
   if (!f) return null;
-  let content = f.content;
-  if (f.truncated && f.raw_url) content = await (await fetch(f.raw_url, { cache: 'no-store' })).text();
-  try { return JSON.parse(content); } catch (e) { return null; }
+  if (!f.truncated || !f.raw_url) return f.content;
+  let res;
+  try { res = await fetch(f.raw_url, { cache: 'no-store' }); } catch (e) { throw new Error('Could not read ' + name + ' from GitHub'); }
+  if (!res.ok) throw new Error('Could not read ' + name + ' (GitHub returned ' + res.status + ')');
+  return res.text();
+}
+function parseOr(text, fallback) {
+  if (text == null) return fallback;
+  try { return JSON.parse(text); } catch (e) { return fallback; }
 }
 
+/* { remote, text, pc, health }. A missing or unreadable store stops the sync:
+   pushing over it would replace every card on every device. */
 async function gistPull() {
   const g = await api('GET', '/gists/' + encodeURIComponent(cfg.gistId));
-  const v2 = await readFile(g, GIST_FILE);
-  if (v2) return v2;
-  // First run against a Gist that still only holds v1 — import it once.
-  const v1 = await readFile(g, GIST_FILE_V1);
-  return v1 ? migrate(v1) : blankDb();
+  const text = await readText(g, GIST_FILE);
+  if (text == null) throw new Error(GIST_FILE + ' is missing from the Gist — not syncing.');
+  let remote;
+  try { remote = JSON.parse(text); } catch (e) { remote = null; }
+  if (!remote || typeof remote !== 'object' || !Array.isArray(remote.projects)) {
+    throw new Error(GIST_FILE + ' in the Gist is unreadable — not syncing.');
+  }
+  return {
+    remote, text,
+    pc: parseOr(await readText(g, PC_FILE), null),
+    health: parseOr(await readText(g, HEALTH_FILE), null)
+  };
+}
+async function gistText() {
+  const g = await api('GET', '/gists/' + encodeURIComponent(cfg.gistId));
+  return readText(g, GIST_FILE);
 }
 
 async function gistPush(payload) {
@@ -615,20 +646,32 @@ async function doSync(opts) {
   clearTimeout(pushTimer);
   ui.syncState = 'syncing'; ui.syncMsg = ''; renderSyncChip();
   try {
-    const remote = await gistPull();
-    const merged = mergeDb(db, remote);
-    const before = canon(db);
-    const after = canon(merged);
-    if (after !== before) {
-      db = merged;
-      saveDb();
-      if (view.screen === 'detail') {
-        const p = byId(view.id);
-        if (!p || p.deleted) view = { screen: 'home', id: null };
+    // Another writer (the PC script, the other device) can save between this
+    // read and our write. The store is read again just before the write, and the
+    // merge is redone if it changed, so their edit is merged rather than lost.
+    for (let tries = 0; ; tries++) {
+      const pulled = await gistPull();
+      ui.pcSync = pulled.pc; ui.health = pulled.health;
+      const merged = mergeDb(db, pulled.remote);
+      const before = canon(db);
+      const after = canon(merged);
+      if (after !== before) {
+        db = merged;
+        saveDb();
+        if (view.screen === 'detail') {
+          const p = byId(view.id);
+          if (!p || p.deleted) view = { screen: 'home', id: null };
+        }
+        render();
       }
-      render();
+      if (after === canon(migrate(pulled.remote))) break;
+      if (await gistText() !== pulled.text) {
+        if (tries < 2) continue;
+        throw new Error('The Gist kept changing — try again shortly.');
+      }
+      await gistPush(after);
+      break;
     }
-    if (after !== canon(migrate(remote))) await gistPush(after);
     cfg.lastSyncAt = now(); saveCfg();
     ui.syncState = 'ok'; ui.syncMsg = '';
     if (opts.loud) toast('Synced');
@@ -660,7 +703,55 @@ function syncChipHTML() {
   else if (ui.syncState === 'offline' || !navigator.onLine) { cls = ''; label = 'OFFLINE'; }
   else { cls = 'ok'; label = 'SYNCED ' + relTime(cfg.lastSyncAt).toUpperCase(); }
   return '<div class="sync-row"><button class="sync-chip ' + cls + '" data-act="settings">' +
-    '<span class="sdot"></span>' + esc(label) + '</button></div>';
+    '<span class="sdot"></span>' + esc(label) + '</button></div>' + healthRowHTML();
+}
+
+/* One row of routine chips from the PC script's routine-health.json, then the
+   PC sync chip from its heartbeat. Green when the last run was fine, amber after
+   one missed or failed run, red after two, grey when paused or not run yet. The
+   PC chip goes amber when the heartbeat is 15 minutes old and red at two hours. */
+const HEALTH_TONE = { ok: 'ok', failed: 'amber', missed: 'amber', pending: 'idle', paused: 'idle' };
+function slotLabel(isoStr) {
+  const t = Date.parse(isoStr || '');
+  if (!t) return '';
+  const d = new Date(t);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const hm = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d >= today ? hm : d.toLocaleDateString([], { weekday: 'short' }) + ' ' + hm;
+}
+function healthChips() {
+  const out = [];
+  const h = ui.health;
+  for (const r of (h && Array.isArray(h.routines) ? h.routines : [])) {
+    let tone = HEALTH_TONE[r.state] || 'idle';
+    if ((r.state === 'missed' || r.state === 'failed') && (r.streak || 0) >= 2) tone = 'bad';
+    const word = r.state === 'pending' ? '—' : r.state;
+    const when = r.state === 'paused' || r.state === 'pending' ? '' : slotLabel(r.last_slot);
+    const tip = [r.label + ': ' + r.state + (r.streak > 1 ? ' ×' + r.streak : ''),
+      r.last_slot ? 'Last slot ' + stampTime(Date.parse(r.last_slot)) : '',
+      r.run_at ? 'Last run ' + stampTime(Date.parse(r.run_at)) : '', r.note || ''].filter(Boolean).join('\n');
+    out.push({ tone, text: r.label + (when ? ' ' + when : '') + ' ' + word, tip });
+  }
+  const pc = ui.pcSync;
+  if (linked() && pc) {
+    const last = Date.parse(pc.last_success || '') || 0;
+    const age = now() - last;
+    let tone = !last ? 'bad' : age >= PC_RED_MS ? 'bad' : age >= PC_AMBER_MS ? 'amber' : 'ok';
+    if (pc.errors && tone === 'ok') tone = 'amber';
+    const tip = ['PC sync: last good run ' + (last ? stampTime(last) : 'never'),
+      pc.errors ? pc.errors + ' failed run(s) since' : '',
+      pc.last_error && pc.last_error.msg ? 'Last error ' + stampTime(Date.parse(pc.last_error.at)) + ': ' + pc.last_error.msg : '',
+      pc.last_change ? 'Last change ' + stampTime(Date.parse(pc.last_change_at)) + ': ' + pc.last_change : '',
+      ...(pc.warnings || [])].filter(Boolean).join('\n');
+    out.push({ tone, text: 'PC sync ' + (last ? relTime(last).replace(' ago', '') : 'never'), tip });
+  }
+  return out;
+}
+function healthRowHTML() {
+  const chips = healthChips();
+  return '<div class="health-row">' + chips.map(c =>
+    '<button class="hchip ' + c.tone + '" data-act="hchip" title="' + esc(c.tip) + '" data-tip="' + esc(c.tip) + '">' +
+    '<span class="sdot"></span>' + esc(c.text) + '</button>').join('') + '</div>';
 }
 
 function brandHTML() {
@@ -741,7 +832,9 @@ function filtered() {
   const fid = ui.folder;
   const rows = live().filter(p => {
     if (ui.filter === 'archived') { if (!p.archived) return false; }
-    else if (p.archived) return false;
+    // Done is the record of finished work, archived or not: feed cards that left
+    // the feed after a week are archived but still belong here
+    else if (p.archived && ui.filter !== 'done') return false;
     if (fid !== 'all' && p.folderId !== fid) return false;
     if (ui.filter === 'open' && isDone(p) && !recentlyDone(p)) return false;
     if (ui.filter === 'done' && !isDone(p)) return false;
@@ -832,12 +925,36 @@ function cardHTML(p) {
       '<div class="pc-head"><div class="pc-titles">' +
       '<div class="pc-name">' + esc(p.name.trim() || 'Untitled objective') + '</div>' +
       '<div class="pc-meta">' + bits.join(' · ') + '</div>' +
+      dueHTML(p) +
       '</div>' + (hasExc(p) ? EXC_SVG : '') + '</div>' +
       nextHTML(p) +
       tags +
       '<div class="pc-tgls">' + togglesHTML(p) + '</div>' +
     '</div>' +
   '</div>';
+}
+
+/* Days from today to the due date (negative once it has passed), or null. */
+function dueDays(p) {
+  if (!p.due) return null;
+  const [y, m, d] = p.due.split('-').map(Number);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(y, m - 1, d) - today) / 86400000);
+}
+/* Coloured at render time, so a deadline turns amber a week out and red on the
+   day without anything rewriting the card. Done cards keep the date, uncoloured. */
+function dueHTML(p) {
+  const n = dueDays(p);
+  if (n === null) return '';
+  const [y, m, d] = p.due.split('-').map(Number);
+  const date = new Date(y, m - 1, d).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  let cls = 'later', say = 'in ' + n + ' d';
+  if (isDone(p)) { cls = 'done'; say = ''; }
+  else if (n < 0) { cls = 'over'; say = -n + ' d overdue'; }
+  else if (n === 0) { cls = 'over'; say = 'today'; }
+  else if (n === 1) { cls = 'soon'; say = 'tomorrow'; }
+  else if (n <= 7) cls = 'soon';
+  return '<div class="pc-due ' + cls + '">DUE ' + esc(date.toUpperCase()) + (say ? ' · ' + esc(say.toUpperCase()) : '') + '</div>';
 }
 
 /* A notes line starting "Next:" is the one thing to do, so the card shows it. */
@@ -1138,6 +1255,9 @@ function detailHTML(inPane) {
     '<div class="field"><label class="lbl" for="f-notes">NOTES</label>' +
       '<textarea class="inp tall" id="f-notes" data-f="notes" placeholder="Detail, context, next steps…">' + esc(p.notes) + '</textarea></div>' +
 
+    '<div class="field"><label class="lbl" for="f-due">DUE</label>' +
+      '<input class="inp" type="date" id="f-due" data-f="due" value="' + esc(p.due) + '"></div>' +
+
     '<div class="field">' + lblHTML('EXCEPTION', 'f-exc', 'exc', 'exc') +
       '<textarea class="inp exc" id="f-exc" data-f="exception" placeholder="Blockers, deviations, anything that needs flagging…">' + esc(p.exception) + '</textarea>' +
       hintHTML('exc', 'Anything written here raises the exception marker on the home card. Leave it empty to clear the flag.') +
@@ -1403,9 +1523,11 @@ function placeMenu() {
 function renderSyncChip() {
   const row = document.querySelector('.sync-row');
   if (!row) return;
+  const old = document.querySelector('.health-row');
+  if (old) old.remove();
   const tmp = document.createElement('div');
   tmp.innerHTML = syncChipHTML();
-  row.replaceWith(tmp.firstElementChild);
+  row.replaceWith(...tmp.childNodes);
 }
 
 /* Fold a card shut, then run the re-render. The height is pinned first so the
@@ -1528,6 +1650,8 @@ function handleClick(e) {
     return;
   }
   if (act === 'settings') { ui.modal = 'settings'; render(true); return; }
+  // phones have no hover, so a tap shows what the tooltip would
+  if (act === 'hchip') { toast(el.dataset.tip || '', el.classList.contains('bad')); return; }
   if (act === 'close-modal') { readSettingsFields(); ui.modal = null; render(true); return; }
   if (act === 'ask-delete' || act === 'menu-delete') { ui.menu = null; ui.confirm = { kind: 'project', id: el.dataset.id }; render(true); return; }
   if (act === 'ask-del-folder') { readFolderFields(); ui.menu = null; ui.confirm = { kind: 'folder', id: el.dataset.id }; render(true); return; }
