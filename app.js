@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.5.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -25,6 +25,10 @@ const GIST_FILE = 'ledger-v2.json';
    routines' health summary. Read-only here. */
 const PC_FILE = 'pc-sync.json';
 const HEALTH_FILE = 'routine-health.json';
+/* Also from the PC: the pipeline board drawn from the state files (F142) and the
+   morning brief's today/1 file (calendar, new mail, ClickUp overdue). */
+const BOARD_FILE = 'pipeline-board.json';
+const TODAY_FILE = 'today.json';
 const PC_AMBER_MS = 15 * 60 * 1000;
 const PC_RED_MS = 2 * 60 * 60 * 1000;
 const GIST_DESC = 'Ledger — objective tracker (synced data)';
@@ -37,7 +41,7 @@ const TOMBSTONE_MS = 30 * 24 * 60 * 60 * 1000;
 const PROJ_FIELDS = ['id', 'folderId', 'name', 'owner', 'notes', 'exception', 'tags', 'category', 'due', 'flags', 'pinned', 'archived', 'deleted', 'createdAt', 'updatedAt'];
 const PANEL_DEF = { x: 20, y: 20, w: 270, h: 230, collapsed: false };
 const FOLDER_FIELDS = ['id', 'name', 'toggles', 'doneKey', 'initialStance', 'single', 'order', 'deleted', 'createdAt', 'updatedAt'];
-const FILTER_KEYS = ['all', 'open', 'action', 'waiting', 'exceptions', 'done', 'archived'];
+const FILTER_KEYS = ['all', 'open', 'action', 'claude', 'others', 'waiting', 'held', 'due', 'exceptions', 'done', 'archived'];
 
 /* Toggles are steps in order, and each carries a stance: after ticking it, is
    the ball in your court or someone else's? The furthest-along ticked step wins,
@@ -291,12 +295,14 @@ function loadCfg() {
         sort: (c.prefsV || 0) < PREFS_V && c.sort === 'smart' ? DEFAULT_SORT
             : SORT_IDS.includes(c.sort) ? c.sort : DEFAULT_SORT,
         prefsV: PREFS_V,
+        // the desk board's tab (1100 px and wider); List is the classic view
+        tab: ['today', 'board', 'pipeline', 'week', 'list'].includes(c.tab) ? c.tab : 'today',
         // panel geometry is a property of this screen, so it is never synced
         panel: Object.assign({}, PANEL_DEF, (c.panel && typeof c.panel === 'object') ? c.panel : {})
       };
     }
   } catch (e) { /* ignore */ }
-  return { token: '', gistId: '', lastSyncAt: 0, filter: DEFAULT_FILTER, folder: 'all', sort: DEFAULT_SORT, prefsV: PREFS_V, panel: Object.assign({}, PANEL_DEF) };
+  return { token: '', gistId: '', lastSyncAt: 0, filter: DEFAULT_FILTER, folder: 'all', sort: DEFAULT_SORT, prefsV: PREFS_V, tab: 'today', panel: Object.assign({}, PANEL_DEF) };
 }
 function saveCfg() { try { localStorage.setItem(CFGKEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } }
 
@@ -344,6 +350,8 @@ let ui = {
   needsRender: false, focusName: false,
   syncState: 'idle', syncMsg: ''
 };
+/* The phone opens on Your move, held cards first; the desk keeps its last filter. */
+if (!window.matchMedia('(min-width: 900px)').matches) ui.filter = 'action';
 let pushTimer = null;
 let pollTimer = null;
 
@@ -605,7 +613,9 @@ async function gistPull() {
   return {
     remote, text,
     pc: parseOr(await readText(g, PC_FILE), null),
-    health: parseOr(await readText(g, HEALTH_FILE), null)
+    health: parseOr(await readText(g, HEALTH_FILE), null),
+    board: parseOr(await readText(g, BOARD_FILE), null),
+    today: parseOr(await readText(g, TODAY_FILE), null)
   };
 }
 async function gistText() {
@@ -651,7 +661,9 @@ async function doSync(opts) {
     // merge is redone if it changed, so their edit is merged rather than lost.
     for (let tries = 0; ; tries++) {
       const pulled = await gistPull();
-      ui.pcSync = pulled.pc; ui.health = pulled.health;
+      const sideChanged = JSON.stringify([pulled.board, pulled.today]) !== JSON.stringify([ui.board, ui.today]);
+      ui.pcSync = pulled.pc; ui.health = pulled.health; ui.board = pulled.board; ui.today = pulled.today;
+      if (sideChanged && rail() && cfg.tab !== 'list') render();
       const merged = mergeDb(db, pulled.remote);
       const before = canon(db);
       const after = canon(merged);
@@ -805,8 +817,13 @@ function folderRailHTML() {
 }
 
 function filtersHTML() {
-  const F = [['all', 'All'], ['open', 'Open'], ['action', 'Actionable'], ['waiting', 'Pending'],
+  // Pending is split: Claude on it, and everyone else. Held and Due appear only
+  // while a board tile has them selected.
+  const F = [['all', 'All'], ['open', 'Open'], ['action', 'Your move'], ['claude', 'Claude'], ['others', 'Others'],
              ['exceptions', 'Exceptions'], ['done', 'Done'], ['archived', 'Archived']];
+  if (ui.filter === 'held') F.splice(3, 0, ['held', 'Held']);
+  if (ui.filter === 'due') F.splice(3, 0, ['due', 'Due ≤ 7 d']);
+  if (ui.filter === 'waiting') F.splice(3, 0, ['waiting', 'Pending']);
   return '<div class="seg">' + F.map(([k, l]) =>
     '<button class="' + (ui.filter === k ? 'active' : '') + '" data-act="filter" data-f="' + k + '">' + l + '</button>').join('') + '</div>';
 }
@@ -840,6 +857,10 @@ function filtered() {
     if (ui.filter === 'done' && !isDone(p)) return false;
     if (ui.filter === 'action' && !isAction(p)) return false;
     if (ui.filter === 'waiting' && !isWaiting(p)) return false;
+    if (ui.filter === 'claude' && !isClaude(p)) return false;
+    if (ui.filter === 'others' && !isOthers(p)) return false;
+    if (ui.filter === 'held' && (isDone(p) || !isHeld(p))) return false;
+    if (ui.filter === 'due') { const n = dueDays(p); if (isDone(p) || n === null || n > 7) return false; }
     if (ui.filter === 'exceptions' && !hasExc(p)) return false;
     if (q) {
       if (tagOnly) {
@@ -855,6 +876,9 @@ function filtered() {
     }
     return true;
   }).sort(sortCmp);
+  // Your move puts held cards first: they look like any other card otherwise
+  if (ui.filter === 'action') rows.sort((a, b) => isHeld(b) - isHeld(a));
+  if (ui.filter === 'due') rows.sort((a, b) => dueDays(a) - dueDays(b));
   return held(rows);
 }
 
@@ -1177,6 +1201,281 @@ function doneFabHTML() {
   return '<button class="done-fab" data-act="home"><span class="chk">✓</span>Done</button>';
 }
 
+/* ================= desk board (1100 px and wider) =================
+   Today, Board, Pipeline and Week are read-only views over the same cards; List
+   is the editing view it always was. A row or card opens in List. */
+const TABS = [['today', 'Today'], ['board', 'Board'], ['pipeline', 'Pipeline'], ['week', 'Week'], ['list', 'List']];
+const TAB_IDS = TABS.map(t => t[0]);
+const DAY = 86400000;
+
+const isHeld = p => /^\s*held\s*:/i.test(p.exception || '');
+const heldReason = p => (p.exception || '').replace(/^\s*held\s*:\s*/i, '');
+/* "Claude on it" versus anyone else: the lit Pending step's own label decides. */
+function isClaude(p) {
+  if (isDone(p)) return false;
+  const f = folderOf(p);
+  return !!(f && f.toggles.some(t => t.stance === 'pending' && p.flags[t.key] && /claude/i.test(t.label)));
+}
+const isOthers = p => isWaiting(p) && !isClaude(p);
+const nextOf = p => { const m = /^\s*next:\s*(.+)$/im.exec(p.notes || ''); return m ? m[1].trim() : ''; };
+const ageDays = p => Math.max(0, Math.floor((now() - (p.updatedAt || now())) / DAY));
+const openCards = () => live().filter(p => !p.archived && !isDone(p));
+function sourceOf(p) {
+  if (p.tags.includes('email')) return 'Mail';
+  if (p.owner && p.owner.trim()) return p.owner.trim();
+  const f = folderOf(p);
+  return f ? f.name : '';
+}
+const ageText = d => d === 0 ? 'today' : d + ' d';
+const company = site => String(site || '').split(/\s+[-–—]\s+/)[0];
+
+function tabsHTML() {
+  return '<div class="seg tabs">' + TABS.map(([id, label]) =>
+    '<button class="' + (cfg.tab === id ? 'active' : '') + '" data-act="tab" data-t="' + id + '">' + label + '</button>').join('') + '</div>';
+}
+function feedAgeHTML() {
+  const pc = ui.pcSync;
+  if (!pc || !pc.applied) return '';
+  const t = Date.parse(pc.applied);
+  return '<div class="b-feed">Feed ' + esc(t ? stampTime(t) : pc.applied) + (t ? ' · ' + esc(relTime(t)) : '') + '</div>';
+}
+function boardHeadHTML() {
+  return '<div class="b-head">' +
+    '<div class="b-brand"><div class="wordmark">Ledger<span class="ver">v' + esc(APP_VERSION) + '</span></div>' + feedAgeHTML() + '</div>' +
+    tabsHTML() +
+    '<div class="b-sync">' + syncChipHTML() + '</div>' +
+  '</div>';
+}
+function tileHTML(n, label, tone, act, extra) {
+  return '<button class="b-tile ' + (tone || '') + '"' + (act ? ' data-act="tile" data-f="' + act + '"' : ' disabled') + '>' +
+    '<span class="b-num">' + esc(String(n)) + '</span><span class="b-lbl">' + esc(label) + '</span>' +
+    (extra ? '<span class="b-sub">' + esc(extra) + '</span>' : '') + '</button>';
+}
+function dueTag(p) { return p.due ? dueHTML(p).replace('pc-due', 'pc-due sm') : ''; }
+
+/* ---- Today ---- */
+function todayHTML() {
+  const open = openCards();
+  const mine = open.filter(isAction);
+  const held = open.filter(isHeld);
+  const due7 = open.filter(p => { const n = dueDays(p); return n !== null && n <= 7; });
+  const t = todayFile();
+  const events = t && Array.isArray(t.calendar) ? t.calendar : null;
+  const tiles = '<div class="b-tiles six">' +
+    tileHTML(mine.length, 'Your move', mine.length ? 'alert' : '', 'action') +
+    tileHTML(held.length, 'Held', held.length ? 'amber' : '', 'held') +
+    tileHTML(due7.length, 'Due in 7 days', due7.some(p => dueDays(p) <= 0) ? 'alert' : due7.length ? 'amber' : '', 'due') +
+    tileHTML(open.filter(isClaude).length, 'Claude on it', 'purple', 'claude') +
+    tileHTML(open.filter(isOthers).length, 'Waiting on others', 'blue', 'others') +
+    tileHTML(events ? events.length : '—', 'Meetings today', '', null, events ? '' : 'no today.json yet') +
+  '</div>';
+  const rows = mine.slice().sort((a, b) => (isHeld(b) - isHeld(a)) || ((a.updatedAt || 0) - (b.updatedAt || 0)));
+  const table = '<div class="b-panel b-mine"><div class="b-ptitle">YOUR MOVE · ' + rows.length + ' · OLDEST FIRST</div>' +
+    (rows.length ? '<table class="b-table"><thead><tr><th>Card</th><th>Next</th><th class="r">Age</th><th>Source</th></tr></thead><tbody>' +
+      rows.map(p => '<tr class="' + (isHeld(p) ? 'held' : '') + '" data-act="open-card" data-id="' + p.id + '">' +
+        '<td class="nm">' + esc(p.name || 'Untitled') + dueTag(p) + '</td>' +
+        '<td>' + (isHeld(p) ? '<b>Held:</b> ' + esc(heldReason(p)) : esc(nextOf(p))) + '</td>' +
+        '<td class="r num">' + ageText(ageDays(p)) + '</td><td class="src">' + esc(sourceOf(p)) + '</td></tr>').join('') +
+      '</tbody></table>' : '<div class="b-empty">Nothing is waiting on you.</div>') + '</div>';
+  return tiles + '<div class="b-cols today">' + calendarHTML(events, t) + table + mailHTML(t) + '</div>';
+}
+/* today/1 from the morning brief, only when it covers today (Toronto, read as local). */
+function todayFile() {
+  const t = ui.today;
+  if (!t || typeof t !== 'object' || t.schema !== 'today/1') return null;
+  const d = new Date();
+  const local = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return t.date === local ? t : null;
+}
+const minsOf = hm => { const m = /^(\d{1,2}):(\d{2})/.exec(hm || ''); return m ? +m[1] * 60 + +m[2] : null; };
+function hhmm(hm) {
+  const n = minsOf(hm);
+  if (n === null) return String(hm || '');
+  const d = new Date(); d.setHours(Math.floor(n / 60), n % 60, 0, 0);
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+function calendarHTML(events, t) {
+  let body;
+  if (!events) body = '<div class="b-empty">The calendar shows here once the morning brief writes today.json.</div>';
+  else if (!events.length) body = '<div class="b-empty">No meetings today.</div>';
+  else {
+    const d = new Date(), nowM = d.getHours() * 60 + d.getMinutes();
+    body = '<div class="b-cal">' + events.slice().sort((a, b) => (minsOf(a.start) || 0) - (minsOf(b.start) || 0)).map(e => {
+      const past = (minsOf(e.end || e.start) || 0) < nowM;
+      return '<div class="b-ev' + (past ? ' past' : '') + '"><div class="b-evt">' + esc(hhmm(e.start)) + (e.end ? '–' + esc(hhmm(e.end)) : '') + '</div>' +
+        '<div class="b-evn">' + esc(e.title || '') + (e.where ? '<span>' + esc(e.where) + '</span>' : '') + '</div></div>';
+    }).join('') + '</div>';
+  }
+  return '<div class="b-panel b-calp"><div class="b-ptitle">TODAY' + (t && t.date ? ' · ' + esc(t.date) : '') + '</div>' + body + '</div>';
+}
+function mailHTML(t) {
+  const mail = t && Array.isArray(t.mail) ? t.mail : null;
+  const cuN = t && typeof t.clickup_overdue === 'number' ? t.clickup_overdue : null;
+  return '<div class="b-panel b-mail"><div class="b-ptitle">NEW MAIL' + (mail ? ' · ' + mail.length : '') + '</div>' +
+    (mail ? (mail.length ? mail.map(m => '<div class="b-ml"><div class="b-mlf">' + esc(m.from || '') + '</div>' +
+      '<div class="b-mls">' + esc(m.gist || '') + '</div></div>').join('') : '<div class="b-empty">No new mail since the last scan.</div>')
+      : '<div class="b-empty">New mail shows here once the morning brief writes today.json.</div>') +
+    '<div class="b-cu"><span class="b-num' + (cuN ? ' alert' : '') + '">' + (cuN !== null ? cuN : '—') + '</span>' +
+      '<span>ClickUp tasks overdue' + (t && cuN === null ? ' (summary email not in yet)' : '') + '</span></div>' +
+  '</div>';
+}
+
+/* ---- Board: product swimlanes by state ---- */
+function miniHTML(p) {
+  return '<div class="b-mini' + (isHeld(p) ? ' held' : '') + (hasExc(p) && !isHeld(p) ? ' exc' : '') + '" data-act="open-card" data-id="' + p.id + '">' +
+    '<div class="b-mn">' + esc(p.name || 'Untitled') + '</div>' +
+    (isHeld(p) ? '<div class="b-mx"><b>Held:</b> ' + esc(heldReason(p)) + '</div>' : nextOf(p) && !isDone(p) ? '<div class="b-mx">' + esc(nextOf(p)) + '</div>' : '') +
+    '<div class="b-mm">' + dueTag(p) + '<span>' + ageText(ageDays(p)) + '</span></div></div>';
+}
+function boardTabHTML() {
+  const cols = [['Your move', isAction], ['Claude on it', isClaude], ['Waiting on others', isOthers],
+    ['Done this week', p => isDone(p) && now() - (p.updatedAt || 0) < 7 * DAY]];
+  const pool = live().filter(p => !p.archived || isDone(p));
+  const head = '<div class="b-lane head"><div class="b-lname"></div>' + cols.map(c => '<div class="b-lh">' + esc(c[0].toUpperCase()) + '</div>').join('') + '</div>';
+  return '<div class="b-lanes">' + head + CATEGORIES.map(cat => {
+    const mine = pool.filter(p => categoryOf(p) === cat);
+    return '<div class="b-lane"><div class="b-lname">' + esc(cat === 'PQ' ? 'Power Quality' : cat) + '</div>' +
+      cols.map(([, fn]) => { const xs = mine.filter(fn).sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+        // eight a cell keeps a lane on screen; the rest are one tap away in List
+        return '<div class="b-lc">' + (xs.length ? xs.slice(0, 8).map(miniHTML).join('') +
+          (xs.length > 8 ? '<div class="b-none">+' + (xs.length - 8) + ' more in List</div>' : '') : '<div class="b-none">—</div>') + '</div>'; }).join('') +
+    '</div>';
+  }).join('') + '</div>';
+}
+
+/* ---- Pipeline (F142): drawn from pipeline-board.json, written by the PC from the state files ---- */
+const PIPE_COLS = ['Bills', 'Calcs', 'Red draft', 'Edits', 'Blackened', 'Sent'];
+const OWNER_TONE = { you: 'alert', claude: 'purple', waiting: 'blue' };
+function pipeRows() {
+  const b = ui.board;
+  if (!b || !Array.isArray(b.sites)) return [];
+  const out = [];
+  for (const s of b.sites) for (const o of (s.options || [])) out.push({ s, o });
+  return out;
+}
+function stageIndex(s, o) {
+  const seq = s.stages || [];
+  const stage = o.stage || s.stage;
+  const i = seq.indexOf(stage);
+  return { i: stage === 'blackened' ? 4 : i, stage };
+}
+const phraseFor = (s, stage) => ({
+  bills: 'paste the site folder path to start the bills',
+  awaiting_calcs: 'calcs done ' + company(s.site),
+  awaiting_edits: 'blacken ' + company(s.site),
+  blackened: s.number_sent ? '' : 'mark ' + (s.number || company(s.site)) + ' sent on the Desk'
+}[stage] || '');
+function pipelineHTML() {
+  const b = ui.board;
+  if (!b || !Array.isArray(b.sites)) return '<div class="b-empty big">The pipeline board appears once the PC sync has published pipeline-board.json.</div>';
+  const sites = b.sites;
+  const month = new Date().toISOString().slice(0, 7);
+  const openJobs = sites.filter(s => s.stage !== 'blackened' || !s.number_sent);
+  const tiles = '<div class="b-tiles four">' +
+    tileHTML(openJobs.length, 'Open jobs', '', null) +
+    tileHTML(sites.filter(s => s.owner === 'you' || ['awaiting_calcs', 'awaiting_edits'].includes(s.stage)).length, 'Waiting on you', 'alert', null) +
+    tileHTML(sites.filter(s => s.hold).length, 'Held', 'amber', null) +
+    tileHTML(sites.filter(s => (s.number_sent || '').startsWith(month) || (s.stage === 'blackened' && (s.updated || '').startsWith(month))).length, 'Filed this month', 'gold', null) +
+  '</div>';
+  const sel = sites.find(s => s.site === ui.pipeSel) || sites[0];
+  const rows = pipeRows().map(({ s, o }) => {
+    const { i } = stageIndex(s, o);
+    const tone = s.hold ? 'amber' : (OWNER_TONE[s.owner] || 'gold');
+    const cells = PIPE_COLS.map((c, k) => {
+      if (k === 5) return '<td class="st">' + (s.number_sent ? '<span class="chip done">' + esc(s.number_sent.slice(5)) + '</span>' : '') + '</td>';
+      if (k < i || (k === 4 && i === 4)) return '<td class="st"><span class="chip done">✓</span></td>';
+      if (k === i) return '<td class="st"><span class="chip ' + tone + '">' + (s.hold ? 'held' : (s.age_days != null ? s.age_days + ' d' : '▶')) + '</span></td>';
+      return '<td class="st"></td>';
+    }).join('');
+    return '<tr class="' + (s === sel ? 'sel' : '') + (s.hold ? ' held' : '') + '" data-act="pipe-sel" data-site="' + esc(s.site) + '">' +
+      '<td class="nm">' + esc(s.site) + (o.name && o.name !== 'main' ? ' <span class="opt">' + esc(o.label || o.name) + '</span>' : '') + '</td>' +
+      '<td class="rt">' + esc((o.route || s.route || '').toUpperCase()) + '</td><td class="num">' + esc(o.number || '') + '</td>' + cells + '</tr>';
+  }).join('');
+  const grid = '<div class="b-panel b-pgrid"><table class="b-table pipe"><thead><tr><th>Site</th><th></th><th>Number</th>' +
+    PIPE_COLS.map(c => '<th class="st">' + c + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table>' +
+    (b.errors && b.errors.length ? '<div class="b-err">' + b.errors.map(esc).join('<br>') + '</div>' : '') +
+    '<div class="b-foot">From the state files · ' + esc(stampTime(Date.parse(b.updated))) + ' · chips: red your move, purple Claude, blue others, amber held</div></div>';
+  return tiles + '<div class="b-cols pipe">' + grid + pipeSideHTML(sel) + '</div>';
+}
+function pipeSideHTML(s) {
+  if (!s) return '<div class="b-panel"></div>';
+  const stage = (ui.board.stage_names || {})[s.stage] || s.stage;
+  const phrase = s.hold ? '' : phraseFor(s, s.stage);
+  const kv = (k, v) => v ? '<div class="b-kv"><span>' + k + '</span><b>' + v + '</b></div>' : '';
+  const links = (s.options || []).filter(o => o.canva_url).map(o =>
+    '<a class="b-link" href="' + esc(o.canva_url) + '" target="_blank" rel="noopener">Canva ' + esc(o.label || o.name || 'draft') + ' ↗</a>').join('');
+  return '<div class="b-panel b-pside"><div class="b-ptitle">' + esc(s.site.toUpperCase()) + '</div>' +
+    (s.hold ? '<div class="b-hold"><b>Held</b> ' + esc(s.hold) + '</div>' : '') +
+    kv('Stage', esc(stage)) +
+    kv('Number', esc(s.number || '—') + (s.number && s.number_assigned === false ? ' <i>not confirmed on the Desk</i>' : '')) +
+    kv('Sent', esc(s.number_sent)) + kv('LDC', esc(s.ldc)) + kv('Owner', esc(s.owner)) + kv('Next', esc(s.next)) +
+    kv('Due', esc(s.due)) + kv('Updated', esc(s.updated) + (s.age_days != null ? ' · ' + s.age_days + ' d ago' : '')) +
+    (phrase ? '<div class="b-phrase"><span>Type</span><code>' + esc(phrase) + '</code></div>' : '') +
+    links +
+    (s.flags && s.flags.length ? '<div class="b-ptitle sp">OPEN FLAGS · ' + s.flags.length + '</div>' + s.flags.map(f =>
+      '<div class="b-flag"><span>' + esc(f.since.slice(5)) + '</span>' + esc(f.text) + '</div>').join('') : '') +
+    (s.events && s.events.length ? '<div class="b-ptitle sp">LATEST</div>' + s.events.map(e =>
+      '<div class="b-flag ev"><span>' + esc(e.date.slice(5)) + '</span>' + esc(e.text) + '</div>').join('') : '') +
+  '</div>';
+}
+
+/* ---- Week (replaces the weekly PDF layout, F167): one landscape page ---- */
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/* Dated update lines in a card's notes ("Oct 19 11:01 · text"), newest first. */
+function updateLines(p) {
+  const out = [];
+  const year = new Date().getFullYear();
+  for (const line of (p.notes || '').split('\n')) {
+    const m = /^([A-Z][a-z]{2}) (\d{1,2})(?: (\d{1,2}):(\d{2}))? · (.+)$/.exec(line.trim());
+    if (!m) continue;
+    const mo = MONTHS.indexOf(m[1].toLowerCase());
+    if (mo < 0) continue;
+    let t = new Date(year, mo, +m[2], +(m[3] || 12), +(m[4] || 0)).getTime();
+    if (t > now() + 2 * DAY) t = new Date(year - 1, mo, +m[2]).getTime();
+    out.push({ t, text: m[5] });
+  }
+  return out;
+}
+const DECIDED_RE = /^(you |jordan\b)|\b(decided|approved|chose|go-ahead|signed off)\b/i;
+function weekHTML() {
+  const wk = now() - 7 * DAY;
+  const all = live();
+  const done = all.filter(p => isDone(p) && (p.updatedAt || 0) >= wk).sort((a, b) => b.updatedAt - a.updatedAt);
+  const decided = [];
+  for (const p of all) for (const u of updateLines(p)) if (u.t >= wk && DECIDED_RE.test(u.text)) decided.push({ p, u });
+  decided.sort((a, b) => b.u.t - a.u.t);
+  const open = openCards();
+  const dueSoon = open.filter(p => { const n = dueDays(p); return n !== null && n <= 7; }).sort((a, b) => dueDays(a) - dueDays(b));
+  const mineNoDue = open.filter(p => isAction(p) && !p.due).sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+  const waiting = open.filter(isOthers).sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+  const line = (p, sub) => '<div class="w-row' + (isHeld(p) ? ' held' : '') + '" data-act="open-card" data-id="' + p.id + '"><div class="w-n">' + esc(p.name || 'Untitled') + '</div>' +
+    '<div class="w-s">' + (isHeld(p) ? 'held, under review' : esc(sub || '')) + '</div></div>';
+  const col = (title, n, body) => '<div class="b-panel w-col"><div class="b-ptitle">' + title + ' · ' + n + '</div>' + (body || '<div class="b-empty">—</div>') + '</div>';
+  const from = new Date(wk).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const to = new Date().toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  return '<div class="w-title">Week of ' + esc(from) + ' – ' + esc(to) + '<button class="btn ghost w-print" data-act="print">Print</button></div>' +
+    '<div class="b-tiles four">' +
+      tileHTML(done.length, 'Done this week', 'gold', null) +
+      tileHTML(decided.length, 'Decided', 'purple', null) +
+      tileHTML(dueSoon.length, 'Due in the next 7 days', dueSoon.length ? 'amber' : '', null) +
+      tileHTML(waiting.length, 'Waiting on others', 'blue', null) +
+    '</div>' +
+    '<div class="b-cols week">' +
+      col('DONE', done.length, done.map(p => line(p, nextOf(p) ? '' : (updateLines(p)[0] || {}).text)).join('')) +
+      col('DECIDED', decided.length, decided.map(d => line(d.p, d.u.text)).join('')) +
+      col('NEXT WEEK', dueSoon.length + mineNoDue.length,
+        dueSoon.map(p => line(p, 'Due ' + p.due.slice(5) + (nextOf(p) ? ' · ' + nextOf(p) : ''))).join('') +
+        mineNoDue.slice(0, 12).map(p => line(p, nextOf(p))).join('')) +
+      col('WAITING ON', waiting.length, waiting.map(p => line(p, ageText(ageDays(p)) + (nextOf(p) ? ' · ' + nextOf(p) : ''))).join('')) +
+    '</div>';
+}
+
+function boardPageHTML() {
+  const body = cfg.tab === 'board' ? boardTabHTML() : cfg.tab === 'pipeline' ? pipelineHTML()
+    : cfg.tab === 'week' ? weekHTML() : todayHTML();
+  return '<div class="board tab-' + cfg.tab + '">' + boardHeadHTML() + '<div class="b-body">' + body + '</div></div>';
+}
+
 /* Phone: one screen at a time, list pushed aside by the detail view.
    Folder and filter chips sit in the bottom cluster with search and add, so the
    controls used on every visit stay inside right-thumb reach. */
@@ -1201,7 +1500,7 @@ function wideHTML() {
   return '<div class="split' + (rail() ? ' with-rail' : '') + '">' +
     (rail() ? folderRailHTML() : '') +
     '<div class="pane pane-list">' +
-      brandHTML() + syncChipHTML() +
+      brandHTML() + (rail() ? tabsHTML() : '') + syncChipHTML() +
       '<div class="search-row">' + searchHTML() + sortBtnHTML() + fabHTML(true) + '</div>' +
       (rail() ? '' : folderChipsHTML()) +
       filtersHTML() +
@@ -1441,10 +1740,10 @@ function render(force) {
 
   // Rebuilding #app replaces the scrolling pane, which used to throw the list
   // back to the top on every tick, sync and toast. Carry the offset across.
-  const sc = document.querySelector('.pane-list, .screen.home');
-  const keep = sc ? { cls: sc.classList.contains('pane-list') ? '.pane-list' : '.screen.home', top: sc.scrollTop } : null;
+  const sc = document.querySelector('.pane-list, .screen.home, .board');
+  const keep = sc ? { cls: sc.classList.contains('pane-list') ? '.pane-list' : sc.classList.contains('board') ? '.board' : '.screen.home', top: sc.scrollTop } : null;
 
-  let html = wide() ? wideHTML() : narrowHTML();
+  let html = rail() && cfg.tab !== 'list' ? boardPageHTML() : wide() ? wideHTML() : narrowHTML();
   html += pinPanelHTML();
   if (ui.editFolder) html += folderEditorHTML();
   if (ui.modal === 'settings') html += settingsHTML();
@@ -1650,6 +1949,14 @@ function handleClick(e) {
     return;
   }
   if (act === 'settings') { ui.modal = 'settings'; render(true); return; }
+  if (act === 'tab') { cfg.tab = el.dataset.t; saveCfg(); render(true); return; }
+  if (act === 'tile') {
+    releaseHold(); ui.filter = el.dataset.f; ui.folder = 'all'; cfg.folder = 'all';
+    cfg.tab = 'list'; saveCfg(); view = { screen: 'home', id: null }; render(true); return;
+  }
+  if (act === 'open-card') { cfg.tab = 'list'; saveCfg(); view = { screen: 'detail', id: el.dataset.id }; render(true); return; }
+  if (act === 'pipe-sel') { ui.pipeSel = el.dataset.site; render(true); return; }
+  if (act === 'print') { window.print(); return; }
   // phones have no hover, so a tap shows what the tooltip would
   if (act === 'hchip') { toast(el.dataset.tip || '', el.classList.contains('bad')); return; }
   if (act === 'close-modal') { readSettingsFields(); ui.modal = null; render(true); return; }

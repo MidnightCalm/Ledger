@@ -263,6 +263,35 @@ Since script v6 (2026-10-19, review fixes F126 and F172):
   `Ledger feed\backups\` and kept 30 days.
 - The script writes a heartbeat, `pc-sync.json`, into the Gist at least every five
   minutes, and merges the routines' `health-*.json` records into `routine-health.json`.
+- Since v6.1 (F062) small op files in `Ledger feed\ops\` change one card at a time
+  (upsert, state, note, remove, merge) and are moved to `ops\done\` once applied. The
+  script keeps every feed card and writes them all to `ledger-cards.json` for op
+  writers. Once `ops\ops-mode.json` exists, full feeds are refused.
+- Since v6.2 it also publishes `pipeline-board.json` (from the pipeline state files) and
+  the newest `today-<date>.json` into the Gist for the desk board.
+
+## Desk board (v3.5.0)
+
+At 1100 px and wider Ledger opens on a board with five tabs. **List** is the classic
+folder, list and detail view where cards are edited; the other four are read-only, and
+clicking a row or card opens it in List.
+
+- **Today**: six tiles (Your move, Held, Due in 7 days, Claude on it, Waiting on others,
+  Meetings today), then today's calendar, the Your move table (oldest first, held cards
+  first and amber with their reason) and new mail with the ClickUp overdue count. The
+  calendar and mail come from the morning brief's `today-<date>.json`, which the PC
+  copies into the Gist; until one exists for today those panels say so.
+- **Board**: Solar, Power Quality, BESS and Miscellaneous lanes across Your move, Claude
+  on it, Waiting on others and Done this week.
+- **Pipeline**: one row per proposal job from the pipeline state files (published by the
+  PC as `pipeline-board.json`), stage columns with chips coloured by owner and age in
+  days, held jobs amber, and a side panel with the number, flags, latest events and the
+  exact phrase to type next (`calcs done …`, `blacken …`).
+- **Week**: Done, Decided, Next week and Waiting on, with a Print button laid out for one
+  landscape page. Held cards print as "held, under review" with no figures.
+
+A card is *held* when its alert starts `HELD:`. On the phone the list opens on **Your
+move** with held cards first, and Pending is split into **Claude** and **Others**.
 
 ## Health chips and due dates (v3.4.0)
 
@@ -361,7 +390,7 @@ same thing.
 
 ## Versions and updating
 
-The running build is shown as a faded `v3.4.0` beside the wordmark, and again at the foot
+The running build is shown as a faded `v3.5.0` beside the wordmark, and again at the foot
 of the sync pane. That is the only reliable way to tell what a given device is actually
 running — a PWA gives no other signal.
 
