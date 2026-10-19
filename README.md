@@ -390,7 +390,7 @@ same thing.
 
 ## Versions and updating
 
-The running build is shown as a faded `v3.5.0` beside the wordmark, and again at the foot
+The running build is shown as a faded `v3.5.1` beside the wordmark, and again at the foot
 of the sync pane. That is the only reliable way to tell what a given device is actually
 running — a PWA gives no other signal.
 

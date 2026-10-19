@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.5.1';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -2632,6 +2632,19 @@ document.addEventListener('visibilitychange', () => {
     doSync();
   } else { hiddenAt = now(); clearTimeout(pushTimer); if (linked()) doSync(); }
 });
+
+/* The document itself must never scroll: every scroller is a pane inside #app.
+   iOS restores the window's scroll offset when the app reloads itself after an
+   update, which shifted the whole home-screen app up: the wordmark slid under
+   the status bar and a dead strip opened below the toolbar (seen 2026-10-19
+   after the 3.5.0 update). Pin the window to the top whenever it moves. */
+try { history.scrollRestoration = 'manual'; } catch (e) { /* older Safari */ }
+const pinWindow = () => { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); };
+window.addEventListener('scroll', pinWindow, { passive: true });
+window.addEventListener('resize', pinWindow);
+window.addEventListener('pageshow', pinWindow);
+document.addEventListener('visibilitychange', pinWindow);
+pinWindow();
 
 /* Update path. The worker is asked to check for a new build on every launch and
    every time the app returns to the foreground; when a new one takes over, the
