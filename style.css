@@ -50,9 +50,9 @@
   --lx-gold-hair:   rgba(228, 181, 74, 0.25);
   --lx-ring-sheen:  linear-gradient(180deg, rgba(124, 92, 255, 0.14), transparent 50%);
   --lx-halo:        #7B61FF;
-  --lx-halo-text:   0 0 4px rgba(123, 97, 255, 0.70), 0 0 9px rgba(123, 97, 255, 0.30);
+  --lx-halo-text:   0 0 14px #7B61FF, 0 0 28px rgba(123, 97, 255, 0.55);
   --lx-halo-rule:   0 0 7px 1px rgba(123, 97, 255, 0.80), 0 0 3px rgba(228, 181, 74, 0.50);
-  --lx-halo-filter: drop-shadow(0 0 5px rgba(123, 97, 255, 0.75)) drop-shadow(0 0 11px rgba(123, 97, 255, 0.35));
+  --lx-halo-filter: drop-shadow(0 0 12px rgba(123, 97, 255, 0.80)) drop-shadow(0 0 26px rgba(123, 97, 255, 0.40));
   --lx-shimmer:     linear-gradient(100deg, #9A7428 0%, #E4B54A 30%, #FFF1C4 46%, #E4B54A 60%, #A87F2E 100%);
   --lx-rule:        linear-gradient(90deg, transparent, #E4B54A 25%, #FFF1C4 50%, #E4B54A 75%, transparent);
   --lx-page-glow:   radial-gradient(120% 50% at 50% 0%, rgba(124, 92, 255, 0.12) 0%, transparent 60%);
