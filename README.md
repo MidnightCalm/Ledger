@@ -197,6 +197,25 @@ moves a card when it appears. The order is released by that chip, by picking a s
 filter, folder, search or tag, by pull to sync, by reloading, or by coming back to the app
 after more than two minutes away. Cards that arrive while it is held go on top.
 
+## Undo and redo (v3.7.0)
+
+**↶** and **↷** beside the sort button, or **Ctrl+Z** and **Ctrl+Y** / **Ctrl+Shift+Z**
+(Cmd on a Mac), step back and forward through your own changes: step ticks (Done
+included), edits, folder moves, archive, pin, delete, new cards and folder edits. Inside a
+text field the browser's own undo handles the typing; the shortcuts work once the field is
+left, and the buttons always do. Typing in one field folds into one step if the pauses are
+under a second and a half. Undo puts back only the fields that step changed, stamped now,
+so it wins the merge on every device, and a field the PC or the other device changed in
+the meantime is left as it is. Changes that arrive by sync or import are never on the
+history. The history lives in memory (100 steps) and starts fresh on every launch. A toast
+names what was undone.
+
+## Counts on the filter chips (v3.7.0)
+
+Each filter chip shows how many cards it holds in the folder on show (All, Solar, Power
+Quality, BESS, Miscellaneous or any other folder): Your move, Claude, Others, Done and the
+rest. **Open** counts open work only, not the cards done today that it also lists.
+
 ## Categories
 
 Since v3.3.0 cards are grouped under **Solar**, **PQ**, **BESS** and **Miscellaneous**
@@ -269,6 +288,11 @@ Since script v6 (2026-10-19, review fixes F126 and F172):
   writers. Once `ops\ops-mode.json` exists, full feeds are refused.
 - Since v6.2 it also publishes `pipeline-board.json` (from the pipeline state files) and
   the newest `today-<date>.json` into the Gist for the desk board.
+- Since v6.4 (2026-11-10) `pipeline-board.json` is built by
+  `~/.claude/skills/_shared/board_publish.py`: one record per job (`Company - Address -
+  Type`), only the fields named in `board_whitelist.json`, held jobs as "under review" with
+  no reason, NDA jobs left out, and a leak check before every write. Hold reasons, flags,
+  events, option labels and Canva links are no longer on the board; they stay on the cards.
 
 ## Desk board (v3.5.0)
 
@@ -285,8 +309,9 @@ clicking a row or card opens it in List.
   on it, Waiting on others and Done this week.
 - **Pipeline**: one row per proposal job from the pipeline state files (published by the
   PC as `pipeline-board.json`), stage columns with chips coloured by owner and age in
-  days, held jobs amber, and a side panel with the number, flags, latest events and the
-  exact phrase to type next (`calcs done …`, `blacken …`).
+  days, held jobs amber, and a side panel with the number, the next step and the exact
+  phrase to type next (`calcs done …`, `blacken …`). Since sync v6.4 the board carries no
+  flags, events or hold reasons, so the panel shows "Held under review" for a held job.
 - **Week**: Done, Decided, Next week and Waiting on, with a Print button laid out for one
   landscape page. Held cards print as "held, under review" with no figures.
 
@@ -390,7 +415,7 @@ same thing.
 
 ## Versions and updating
 
-The running build is shown as a faded `v3.5.1` beside the wordmark, and again at the foot
+The running build is shown as a faded `v3.7.0` beside the wordmark, and again at the foot
 of the sync pane. That is the only reliable way to tell what a given device is actually
 running — a PWA gives no other signal.
 

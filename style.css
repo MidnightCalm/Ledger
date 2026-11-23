@@ -423,6 +423,15 @@ body {
 .sort-btn:hover { border-color: var(--lx-purple); color: var(--lx-purple); }
 .sort-btn.on { border-color: var(--lx-purple); color: var(--lx-purple); background: var(--lx-purple-soft); }
 .search-row .sort-btn { width: 42px; height: 42px; }
+/* undo / redo (v3.7.0): the sort button's look, a little narrower, faded when
+   there is nothing to step through */
+.undo-btn { width: 38px; font-size: 19px; }
+.search-row .undo-btn { width: 36px; }
+.undo-btn:disabled { opacity: 0.35; cursor: default; }
+.undo-btn:disabled:hover { border-color: var(--lx-line); color: var(--lx-ink-2); }
+/* per-state counts on the filter chips (v3.7.0) */
+.seg .cnt { margin-left: 6px; font-size: 0.82em; opacity: 0.62; font-variant-numeric: tabular-nums; }
+.seg button.active .cnt { opacity: 0.9; }
 .menu-sheet .m-item.sel { color: var(--lx-purple); }
 
 /* ============ fields ============ */

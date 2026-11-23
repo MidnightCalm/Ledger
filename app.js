@@ -11,7 +11,7 @@
 /* ================= constants ================= */
 /* Bump APP_VERSION and CACHE in sw.js together on every release — the version
    shown beside the wordmark is how you tell which build a device is running. */
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.7.0';
 const KEY = 'ledger.db.v1';
 const CFGKEY = 'ledger.cfg.v1';
 
@@ -276,7 +276,13 @@ function loadDb() {
   } catch (e) { /* corrupted — start fresh */ }
   return blankDb();
 }
-function saveDb() { try { localStorage.setItem(KEY, canon(db)); } catch (e) { toast('Local storage is full', true); } }
+/* Every local change passes through here, so this is where undo learns about it
+   (v3.7.0). A save made while merging the Gist or an import is quiet: it moves the
+   baseline on without becoming something Ctrl+Z would undo. */
+function saveDb(quiet) {
+  if (typeof undoNote === 'function') undoNote(!!quiet);
+  try { localStorage.setItem(KEY, canon(db)); } catch (e) { toast('Local storage is full', true); }
+}
 
 function loadCfg() {
   try {
@@ -476,6 +482,119 @@ function currentFolder() {
 
 function touch(rec) { rec.updatedAt = now(); saveDb(); schedulePush(); }
 
+/* ================= undo / redo (v3.7.0) =================
+   Each local save is compared, record by record, with the one before it; what
+   changed becomes one step. Undo puts back only the fields that step changed,
+   stamped now, so the restored value wins the merge on every device while a
+   field the PC or the other device changed meanwhile is left alone. Typing in
+   one field (or one folder) within a moment folds into a single step; a tick,
+   move, archive or delete is always its own. Steps live in memory only, so a
+   reload starts a fresh history. */
+var UNDO_MAX = 100;
+var UNDO_FOLD_MS = 1500;
+var UNDO_DISCRETE = ['flags', 'deleted', 'archived', 'folderId', 'pinned'];
+var undoStack = [], redoStack = [];
+var undoBase = null;
+var undoBusy = false;
+
+function undoSnap() {
+  const m = new Map();
+  for (const f of db.folders) m.set('f:' + f.id, JSON.stringify(f));
+  for (const p of db.projects) m.set('p:' + p.id, JSON.stringify(p));
+  return m;
+}
+function undoFields(a, b) {
+  const out = [];
+  for (const k of new Set([...Object.keys(a || {}), ...Object.keys(b || {})])) {
+    if (k === 'updatedAt') continue;
+    if (JSON.stringify(a ? a[k] : undefined) !== JSON.stringify(b ? b[k] : undefined)) out.push(k);
+  }
+  return out;
+}
+function undoNote(quiet) {
+  const snap = undoSnap();
+  const base = undoBase;
+  undoBase = snap;
+  if (quiet || undoBusy || !base) return;
+  const recs = [];
+  for (const [k, s] of snap) {
+    const old = base.get(k);
+    if (old === s) continue;
+    const before = old ? JSON.parse(old) : null, after = JSON.parse(s);
+    const fields = before ? undoFields(before, after) : ['*'];
+    if (fields.length) recs.push({ key: k, before, after, fields });
+  }
+  if (!recs.length) return;
+  const t = now();
+  const top = undoStack[undoStack.length - 1];
+  const textOnly = r => r.fields.every(f => f !== '*' && !UNDO_DISCRETE.includes(f));
+  if (top && t - top.at < UNDO_FOLD_MS && recs.length === 1 && top.recs.length === 1 &&
+      top.recs[0].key === recs[0].key && textOnly(recs[0]) && textOnly(top.recs[0])) {
+    const r = top.recs[0];                 // keep the first before, take the newest after
+    r.after = recs[0].after;
+    r.fields = [...new Set([...r.fields, ...recs[0].fields])];
+    top.at = t;
+  } else {
+    undoStack.push({ at: t, recs });
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+  }
+  redoStack = [];
+  renderUndoBtns();
+}
+function undoLabel(step) {
+  const r = step.recs[0];
+  const what = r.fields.includes('*') ? 'add'
+    : r.fields.includes('deleted') ? 'delete'
+    : r.fields.includes('flags') ? 'step change'
+    : r.fields.includes('folderId') ? 'move'
+    : r.fields.includes('archived') ? 'archive'
+    : r.fields.includes('pinned') ? 'pin' : 'edit';
+  const rec = r.after || r.before || {};
+  const name = (rec.name || '').trim() || (r.key[0] === 'f' ? 'folder' : 'objective');
+  return what + ' · ' + (step.recs.length > 1 ? step.recs.length + ' items' : name);
+}
+function undoApply(step, side) {
+  const t = now();
+  for (const r of step.recs) {
+    const id = r.key.slice(2);
+    const list = r.key[0] === 'f' ? db.folders : db.projects;
+    const cur = list.find(x => x.id === id);
+    const src = r[side];
+    if (!src) {                          // undoing an add: tombstone it
+      if (cur) { cur.deleted = true; cur.updatedAt = t; }
+      continue;
+    }
+    if (!cur) { list.push(Object.assign(JSON.parse(JSON.stringify(src)), { updatedAt: t })); continue; }
+    if (r.fields.includes('*')) Object.assign(cur, JSON.parse(JSON.stringify(src)));
+    else for (const f of r.fields) cur[f] = src[f] === undefined ? undefined : JSON.parse(JSON.stringify(src[f]));
+    cur.updatedAt = t;
+  }
+}
+function undoRun(redo) {
+  const from = redo ? redoStack : undoStack, to = redo ? undoStack : redoStack;
+  const step = from.pop();
+  if (!step) { toast(redo ? 'Nothing to redo' : 'Nothing to undo'); return; }
+  undoBusy = true;
+  try { undoApply(step, redo ? 'after' : 'before'); saveDb(); } finally { undoBusy = false; }
+  step.at = 0;                           // never fold a later edit into a replayed step
+  to.push(step);
+  schedulePush();
+  ui.menu = null; ui.swipeId = null; ui.confirm = null;
+  if (view.screen === 'detail') { const p = byId(view.id); if (!p || p.deleted) view = { screen: 'home', id: null }; }
+  render(true);
+  toast((redo ? 'Redid ' : 'Undid ') + undoLabel(step));
+}
+function undoBtnsHTML() {
+  return '<button class="sort-btn undo-btn" data-act="undo" title="Undo (Ctrl+Z)" aria-label="Undo"' + (undoStack.length ? '' : ' disabled') + '>↶</button>' +
+    '<button class="sort-btn undo-btn" data-act="redo" title="Redo (Ctrl+Y)" aria-label="Redo"' + (redoStack.length ? '' : ' disabled') + '>↷</button>';
+}
+function renderUndoBtns() {
+  for (const b of document.querySelectorAll('.undo-btn')) {
+    b.disabled = !(b.dataset.act === 'undo' ? undoStack : redoStack).length;
+  }
+}
+undoBase = undoSnap();
+
 function createProject() {
   const f = currentFolder() || liveFolders()[0];
   if (!f) { toast('Create a folder first', true); return; }
@@ -669,7 +788,7 @@ async function doSync(opts) {
       const after = canon(merged);
       if (after !== before) {
         db = merged;
-        saveDb();
+        saveDb(true);   // other devices' and the PC's changes are not ours to undo
         if (view.screen === 'detail') {
           const p = byId(view.id);
           if (!p || p.deleted) view = { screen: 'home', id: null };
@@ -824,8 +943,10 @@ function filtersHTML() {
   if (ui.filter === 'held') F.splice(3, 0, ['held', 'Held']);
   if (ui.filter === 'due') F.splice(3, 0, ['due', 'Due ≤ 7 d']);
   if (ui.filter === 'waiting') F.splice(3, 0, ['waiting', 'Pending']);
+  const n = filterCounts();
   return '<div class="seg">' + F.map(([k, l]) =>
-    '<button class="' + (ui.filter === k ? 'active' : '') + '" data-act="filter" data-f="' + k + '">' + l + '</button>').join('') + '</div>';
+    '<button class="' + (ui.filter === k ? 'active' : '') + '" data-act="filter" data-f="' + k + '">' + l +
+    '<span class="cnt">' + n[k] + '</span></button>').join('') + '</div>';
 }
 function searchHTML() {
   return '<div class="search-pill"><input id="q" type="search" placeholder="Search objectives" value="' + esc(ui.q) + '" autocomplete="off" autocorrect="off" spellcheck="false"></div>';
@@ -840,6 +961,33 @@ function fabHTML(small) {
   return '<button class="fab' + (small ? ' sm' : '') + '" data-act="new" aria-label="Add objective">+</button>';
 }
 
+/* Does a card belong under a filter chip? Shared by the list and the chip counts. */
+function inFilter(p, k) {
+  if (k === 'archived') { if (!p.archived) return false; }
+  // Done is the record of finished work, archived or not: feed cards that left
+  // the feed after a week are archived but still belong here
+  else if (p.archived && k !== 'done') return false;
+  if (k === 'open' && isDone(p) && !recentlyDone(p)) return false;
+  if (k === 'done' && !isDone(p)) return false;
+  if (k === 'action' && !isAction(p)) return false;
+  if (k === 'waiting' && !isWaiting(p)) return false;
+  if (k === 'claude' && !isClaude(p)) return false;
+  if (k === 'others' && !isOthers(p)) return false;
+  if (k === 'held' && (isDone(p) || !isHeld(p))) return false;
+  if (k === 'due') { const n = dueDays(p); if (isDone(p) || n === null || n > 7) return false; }
+  if (k === 'exceptions' && !hasExc(p)) return false;
+  return true;
+}
+/* How many cards each chip holds in the folder on show (All or one folder), so
+   "Your move 5" reads at a glance whichever type is picked (v3.7.0). Open counts
+   open work only, not the cards done today that it also lists. */
+function filterCounts() {
+  const scope = live().filter(p => ui.folder === 'all' || p.folderId === ui.folder);
+  const n = {};
+  for (const k of FILTER_KEYS) n[k] = scope.filter(p => inFilter(p, k) && (k !== 'open' || !isDone(p))).length;
+  return n;
+}
+
 function filtered() {
   const raw = ui.q.trim().toLowerCase();
   // "#tag" searches tags only; a bare word searches everything including tags,
@@ -848,20 +996,8 @@ function filtered() {
   const q = tagOnly ? raw.slice(1) : raw;
   const fid = ui.folder;
   const rows = live().filter(p => {
-    if (ui.filter === 'archived') { if (!p.archived) return false; }
-    // Done is the record of finished work, archived or not: feed cards that left
-    // the feed after a week are archived but still belong here
-    else if (p.archived && ui.filter !== 'done') return false;
     if (fid !== 'all' && p.folderId !== fid) return false;
-    if (ui.filter === 'open' && isDone(p) && !recentlyDone(p)) return false;
-    if (ui.filter === 'done' && !isDone(p)) return false;
-    if (ui.filter === 'action' && !isAction(p)) return false;
-    if (ui.filter === 'waiting' && !isWaiting(p)) return false;
-    if (ui.filter === 'claude' && !isClaude(p)) return false;
-    if (ui.filter === 'others' && !isOthers(p)) return false;
-    if (ui.filter === 'held' && (isDone(p) || !isHeld(p))) return false;
-    if (ui.filter === 'due') { const n = dueDays(p); if (isDone(p) || n === null || n > 7) return false; }
-    if (ui.filter === 'exceptions' && !hasExc(p)) return false;
+    if (!inFilter(p, ui.filter)) return false;
     if (q) {
       if (tagOnly) {
         if (!p.tags.some(t => t.includes(q))) return false;
@@ -1490,7 +1626,7 @@ function narrowHTML() {
     '</div>' +
     '<div class="bottom-stack">' +
       folderChipsHTML() + filtersHTML() +
-      '<div class="bottom-bar">' + searchHTML() + sortBtnHTML() + fabHTML() + '</div>' +
+      '<div class="bottom-bar">' + searchHTML() + undoBtnsHTML() + sortBtnHTML() + fabHTML() + '</div>' +
     '</div>';
 }
 
@@ -1501,7 +1637,7 @@ function wideHTML() {
     (rail() ? folderRailHTML() : '') +
     '<div class="pane pane-list">' +
       brandHTML() + (rail() ? tabsHTML() : '') + syncChipHTML() +
-      '<div class="search-row">' + searchHTML() + sortBtnHTML() + fabHTML(true) + '</div>' +
+      '<div class="search-row">' + searchHTML() + undoBtnsHTML() + sortBtnHTML() + fabHTML(true) + '</div>' +
       (rail() ? '' : folderChipsHTML()) +
       filtersHTML() +
       '<div id="list-host">' + listHTML() + '</div>' +
@@ -1881,6 +2017,10 @@ function handleClick(e) {
     return;
   }
 
+  if (act === 'undo' || act === 'redo') {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    undoRun(act === 'redo'); return;
+  }
   if (act === 'open') { view = { screen: 'detail', id: el.dataset.id }; render(true); return; }
   if (act === 'home') { view = { screen: 'home', id: null }; render(true); return; }
   if (act === 'new') { createProject(); return; }
@@ -2506,6 +2646,13 @@ document.addEventListener('focusout', () => {
 })();
 
 document.addEventListener('keydown', e => {
+  // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z (Cmd on a Mac). Inside a text field the
+  // browser's own undo handles the typing, so the app steps aside there.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[zy]$/i.test(e.key) && !isTyping()) {
+    e.preventDefault();
+    undoRun(e.key.toLowerCase() === 'y' || e.shiftKey);
+    return;
+  }
   if (e.key === 'Escape') {
     if (ui.menu) { ui.menu = null; render(true); }
     else if (ui.confirm) { ui.confirm = null; render(true); }
@@ -2598,7 +2745,7 @@ function doImport() {
         const d = JSON.parse(String(r.result));
         if (!d || !Array.isArray(d.projects)) throw new Error('bad shape');
         db = mergeDb(db, d);
-        saveDb();
+        saveDb(true);
         render(true);
         toast('Imported');
         schedulePush();
@@ -2672,7 +2819,7 @@ if ('serviceWorker' in navigator) {
 
 /* Write straight back on boot so a v1 store is upgraded on disk immediately,
    rather than being re-migrated on every launch until the first edit. */
-saveDb();
+saveDb(true);
 render(true);
 if (linked()) { ui.syncState = 'idle'; doSync(); }
 else ui.syncState = 'unlinked';
